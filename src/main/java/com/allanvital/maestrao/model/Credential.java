@@ -26,7 +26,7 @@ public class Credential {
     private String username;
 
     @Lob
-    @Column(name = "encrypted_secret", nullable = false)
+    @Column(name = "encrypted_secret", nullable = false, columnDefinition = "LONGTEXT")
     private String encryptedSecret;
 
     @Column(length = 500)
