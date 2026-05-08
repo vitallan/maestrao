@@ -1,0 +1,11 @@
+.git/
+.idea/
+.mvn/wrapper/maven-wrapper.jar
+target/
+
+*.iml
+*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
