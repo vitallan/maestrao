@@ -17,18 +17,23 @@ public interface JobDefinitionRepository extends JpaRepository<JobDefinition, Lo
     @EntityGraph(attributePaths = {"hosts"})
     Optional<JobDefinition> findWithHostsById(Long id);
 
-    @Query("""
-            select new com.allanvital.maestrao.repository.JobDefinitionListRow(
-                j.id,
-                j.name,
-                j.shell,
-                j.useSudo,
-                j.updatedAt,
-                count(h)
-            )
-            from JobDefinition j
-            left join j.hosts h
-            group by j.id, j.name, j.shell, j.useSudo, j.updatedAt
-            """)
+    @Query(
+            value = """
+                    select new com.allanvital.maestrao.repository.JobDefinitionListRow(
+                        j.id,
+                        j.name,
+                        j.shell,
+                        j.useSudo,
+                        j.updatedAt,
+                        count(h)
+                    )
+                    from JobDefinition j
+                    left join j.hosts h
+                    group by j.id, j.name, j.shell, j.useSudo, j.updatedAt
+                    """,
+            countQuery = """
+                    select count(j) from JobDefinition j
+                    """
+    )
     Page<JobDefinitionListRow> findAllWithHostCount(Pageable pageable);
 }
