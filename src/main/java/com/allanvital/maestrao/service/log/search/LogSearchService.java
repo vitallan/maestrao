@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -15,9 +16,11 @@ import java.util.List;
 public class LogSearchService {
 
     private final LogLineRepository logLineRepository;
+    private final MySqlFullTextSupport mySqlFullTextSupport;
 
-    public LogSearchService(LogLineRepository logLineRepository) {
+    public LogSearchService(LogLineRepository logLineRepository, MySqlFullTextSupport mySqlFullTextSupport) {
         this.logLineRepository = logLineRepository;
+        this.mySqlFullTextSupport = mySqlFullTextSupport;
     }
 
     public Page<LogSearchRow> search(String query, Pageable pageable) {
@@ -26,10 +29,36 @@ public class LogSearchService {
     }
 
     public SearchPage fetchPage(String query, Pageable pageable) {
+        return fetchPage(query, SearchWindow.H24, pageable);
+    }
+
+    public long countTotal(String query) {
+        return countTotal(query, SearchWindow.H24);
+    }
+
+    public SearchPage fetchPage(String query, SearchWindow window, Pageable pageable) {
         ParsedQuery parsed = parse(query);
+        Instant since = window == null ? null : window.since();
 
         int pageSize = pageable.getPageSize();
-        List<LogSearchRow> rows = logLineRepository.fetchAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, pageable, pageSize + 1);
+        List<LogSearchRow> rows;
+
+        String freeText = normalizeOptional(parsed.freeText);
+        boolean canUseFullText = freeText != null
+                && (parsed.kvTerms == null || parsed.kvTerms.isEmpty())
+                && mySqlFullTextSupport.isFullTextAvailable();
+
+        if (canUseFullText) {
+            String booleanQuery = toBooleanAndQuery(freeText);
+            if (booleanQuery != null) {
+                rows = logLineRepository.fetchFullText(booleanQuery, parsed.logName, since, pageable, pageSize + 1);
+            } else {
+                rows = logLineRepository.fetchAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, since, pageable, pageSize + 1);
+            }
+        } else {
+            rows = logLineRepository.fetchAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, since, pageable, pageSize + 1);
+        }
+
         boolean hasNext = rows.size() > pageSize;
         if (hasNext) {
             rows = rows.subList(0, pageSize);
@@ -37,9 +66,22 @@ public class LogSearchService {
         return new SearchPage(rows, hasNext);
     }
 
-    public long countTotal(String query) {
+    public long countTotal(String query, SearchWindow window) {
         ParsedQuery parsed = parse(query);
-        return logLineRepository.countAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName);
+        Instant since = window == null ? null : window.since();
+
+        String freeText = normalizeOptional(parsed.freeText);
+        boolean canUseFullText = freeText != null
+                && (parsed.kvTerms == null || parsed.kvTerms.isEmpty())
+                && mySqlFullTextSupport.isFullTextAvailable();
+
+        if (canUseFullText) {
+            String booleanQuery = toBooleanAndQuery(freeText);
+            if (booleanQuery != null) {
+                return logLineRepository.countFullText(booleanQuery, parsed.logName, since);
+            }
+        }
+        return logLineRepository.countAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, since);
     }
 
     private String normalizeOptional(String value) {
@@ -197,5 +239,59 @@ public class LogSearchService {
     }
 
     public record SearchPage(List<LogSearchRow> items, boolean hasNext) {
+    }
+
+    private String toBooleanAndQuery(String freeText) {
+        if (freeText == null || freeText.isBlank()) {
+            return null;
+        }
+
+        List<String> terms = new ArrayList<>();
+        for (String raw : freeText.trim().split("\\s+")) {
+            if (raw == null || raw.isBlank()) {
+                continue;
+            }
+            String cleaned = sanitizeFullTextTerm(raw);
+            if (cleaned != null) {
+                terms.add(cleaned);
+            }
+        }
+
+        if (terms.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (String t : terms) {
+            if (!sb.isEmpty()) {
+                sb.append(' ');
+            }
+            sb.append('+').append(t);
+        }
+        return sb.toString();
+    }
+
+    private String sanitizeFullTextTerm(String raw) {
+        // Conservative token filter for MySQL/MariaDB boolean mode.
+        // Keeps word-ish tokens and common log token characters.
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder out = new StringBuilder(trimmed.length());
+        for (int i = 0; i < trimmed.length(); i++) {
+            char c = trimmed.charAt(i);
+            boolean ok = (c >= 'a' && c <= 'z')
+                    || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9')
+                    || c == '_' || c == '.' || c == '/' || c == ':' || c == '-';
+            if (ok) {
+                out.append(c);
+            }
+        }
+
+        String result = out.toString();
+        return result.isBlank() ? null : result;
     }
 }

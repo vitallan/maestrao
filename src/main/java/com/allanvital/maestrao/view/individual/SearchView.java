@@ -2,6 +2,7 @@ package com.allanvital.maestrao.view.individual;
 
 import com.allanvital.maestrao.service.log.search.LogSearchRow;
 import com.allanvital.maestrao.service.log.search.LogSearchService;
+import com.allanvital.maestrao.service.log.search.SearchWindow;
 import com.vaadin.flow.component.UI;
 import com.allanvital.maestrao.view.MainLayout;
 import com.vaadin.flow.component.Key;
@@ -15,6 +16,7 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
+import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.data.value.ValueChangeMode;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
@@ -41,6 +43,7 @@ public class SearchView extends VerticalLayout {
     private final LogSearchService logSearchService;
     private final Executor searchCountExecutor;
     private final TextField query = new TextField();
+    private final Select<SearchWindow> window = new Select<>();
     private final Grid<LogSearchRow> grid = new Grid<>(LogSearchRow.class, false);
 
     private final Span pageInfo = new Span();
@@ -92,7 +95,15 @@ public class SearchView extends VerticalLayout {
             loadPage(0);
         });
 
-        HorizontalLayout bar = new HorizontalLayout(query);
+        window.setItems(SearchWindow.values());
+        window.setItemLabelGenerator(SearchWindow::label);
+        window.setValue(SearchWindow.H24);
+        window.addValueChangeListener(event -> {
+            currentPage = 0;
+            loadPage(0);
+        });
+
+        HorizontalLayout bar = new HorizontalLayout(query, window);
         bar.setWidthFull();
         bar.setAlignItems(Alignment.BASELINE);
         bar.expand(query);
@@ -182,7 +193,8 @@ public class SearchView extends VerticalLayout {
         long token = ++searchToken;
         currentPage = pageIndex;
 
-        LogSearchService.SearchPage page = logSearchService.fetchPage(q, PageRequest.of(pageIndex, PAGE_SIZE));
+        SearchWindow selectedWindow = window.getValue() == null ? SearchWindow.H24 : window.getValue();
+        LogSearchService.SearchPage page = logSearchService.fetchPage(q, selectedWindow, PageRequest.of(pageIndex, PAGE_SIZE));
         hasNext = page.hasNext();
         grid.setItems(page.items());
 
@@ -192,7 +204,7 @@ public class SearchView extends VerticalLayout {
         } else {
             totalItems = null;
             resultsCount.setText("Counting...");
-            scheduleCountIfStable(token, qTrim);
+            scheduleCountIfStable(token, qTrim, selectedWindow);
         }
 
         updatePager();
@@ -213,7 +225,7 @@ public class SearchView extends VerticalLayout {
         nextPage.setEnabled(hasNext);
     }
 
-    private void scheduleCountIfStable(long token, String qTrim) {
+    private void scheduleCountIfStable(long token, String qTrim, SearchWindow selectedWindow) {
         // Don't run counts for empty queries. Also avoid re-counting if the query didn't change.
         if (qTrim.isEmpty()) {
             return;
@@ -225,7 +237,7 @@ public class SearchView extends VerticalLayout {
 
         UI ui = UI.getCurrent();
         CompletableFuture
-                .supplyAsync(() -> logSearchService.countTotal(qTrim), searchCountExecutor)
+                .supplyAsync(() -> logSearchService.countTotal(qTrim, selectedWindow), searchCountExecutor)
                 .whenComplete((count, err) -> {
                     if (err != null) {
                         return;
