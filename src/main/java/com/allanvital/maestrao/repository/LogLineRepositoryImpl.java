@@ -135,12 +135,22 @@ public class LogLineRepositoryImpl implements LogLineRepositoryCustom {
         List<Object[]> rows = q.getResultList();
         List<LogSearchRow> out = new ArrayList<>(rows.size());
         for (Object[] r : rows) {
+            Object ingestedAtRaw = r[4];
+            Instant ingestedAt;
+            if (ingestedAtRaw instanceof java.sql.Timestamp ts) {
+                ingestedAt = ts.toInstant();
+            } else if (ingestedAtRaw instanceof java.time.LocalDateTime ldt) {
+                ingestedAt = java.sql.Timestamp.valueOf(ldt).toInstant();
+            } else {
+                throw new IllegalStateException("Unexpected ingested_at type: " + (ingestedAtRaw == null ? "null" : ingestedAtRaw.getClass().getName()));
+            }
+
             out.add(new LogSearchRow(
                     ((Number) r[0]).longValue(),
                     (String) r[1],
                     (String) r[2],
                     (String) r[3],
-                    ((java.sql.Timestamp) r[4]).toInstant(),
+                    ingestedAt,
                     (String) r[5]
             ));
         }
