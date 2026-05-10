@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -19,4 +20,19 @@ public interface LogLineRepository extends JpaRepository<LogLine, Long>, LogLine
     @Modifying
     @Query("delete from LogLine l where l.ingestedAt < :cutoff")
     int deleteOlderThan(@Param("cutoff") Instant cutoff);
+
+    @Query("""
+            select new com.allanvital.maestrao.repository.LogSourceLineCountRow(
+                s.id,
+                s.name,
+                count(l)
+            )
+            from LogLine l
+            join l.logSource s
+            where l.ingestedAt >= :from
+              and l.ingestedAt < :to
+            group by s.id, s.name
+            order by count(l) desc
+            """)
+    List<LogSourceLineCountRow> countByLogSourceBetween(@Param("from") Instant from, @Param("to") Instant to);
 }

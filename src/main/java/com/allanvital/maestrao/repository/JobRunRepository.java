@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -32,4 +33,14 @@ public interface JobRunRepository extends JpaRepository<JobRun, Long> {
               )
             """)
     List<JobRun> findLatestRunsByJobDefinitionIds(@Param("jobDefinitionIds") List<Long> jobDefinitionIds);
+
+    @Query("""
+            select r
+            from JobRun r
+            join fetch r.jobDefinition d
+            where r.startedAt >= :from
+              and r.startedAt < :to
+            order by r.id asc
+            """)
+    List<JobRun> findRunsStartedBetweenWithJobDefinition(@Param("from") Instant from, @Param("to") Instant to);
 }

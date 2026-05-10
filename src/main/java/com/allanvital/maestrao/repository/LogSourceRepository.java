@@ -28,6 +28,8 @@ public interface LogSourceRepository extends JpaRepository<LogSource, Long> {
     @EntityGraph(attributePaths = {"host", "host.credential"})
     java.util.List<LogSource> findByEnabledTrueOrderByIdAsc();
 
+    java.util.List<LogSource> findAllByOrderByNameAsc();
+
     @EntityGraph(attributePaths = {"host", "host.credential"})
     Optional<LogSource> findWithHostAndCredentialById(Long id);
 }

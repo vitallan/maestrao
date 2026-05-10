@@ -71,7 +71,8 @@ public class MainLayout extends AppLayout {
                 new SideNavItem("Hosts", HostsView.class, VaadinIcon.SERVER.create()),
                 new SideNavItem("Logs", LogsView.class, VaadinIcon.FILE_TEXT.create()),
                 new SideNavItem("Jobs", JobsView.class, VaadinIcon.TOOLS.create()),
-                new SideNavItem("Search", SearchView.class, VaadinIcon.SEARCH.create())
+                new SideNavItem("Search", SearchView.class, VaadinIcon.SEARCH.create()),
+                new SideNavItem("Email", EmailView.class, VaadinIcon.ENVELOPE.create())
                 //new SideNavItem("Configuration", ConfigurationView.class, VaadinIcon.COG.create())
         );
 
