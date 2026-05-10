@@ -2,6 +2,7 @@ package com.allanvital.maestrao.view.individual;
 
 import com.allanvital.maestrao.service.log.search.LogSearchRow;
 import com.allanvital.maestrao.service.log.search.LogSearchService;
+import com.vaadin.flow.component.UI;
 import com.allanvital.maestrao.view.MainLayout;
 import com.vaadin.flow.component.Key;
 import com.vaadin.flow.component.button.Button;
@@ -18,8 +19,10 @@ import com.vaadin.flow.data.value.ValueChangeMode;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import jakarta.annotation.security.PermitAll;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -36,6 +39,7 @@ public class SearchView extends VerticalLayout {
     private static final int TRUNCATE_CHARS = 200;
 
     private final LogSearchService logSearchService;
+    private final Executor searchCountExecutor;
     private final TextField query = new TextField();
     private final Grid<LogSearchRow> grid = new Grid<>(LogSearchRow.class, false);
 
@@ -45,14 +49,19 @@ public class SearchView extends VerticalLayout {
     private final Button nextPage = new Button("Next");
 
     private int currentPage = 0;
-    private long totalItems = 0;
+    private Long totalItems;
+    private boolean hasNext;
+
+    private long searchToken = 0;
+    private String lastCountQuery;
 
     private final DateTimeFormatter dateTimeFormatter = DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm:ss")
             .withZone(ZoneId.systemDefault());
 
-    public SearchView(LogSearchService logSearchService) {
+    public SearchView(LogSearchService logSearchService, Executor searchCountExecutor) {
         this.logSearchService = logSearchService;
+        this.searchCountExecutor = searchCountExecutor;
 
         setSizeFull();
         setPadding(true);
@@ -146,8 +155,7 @@ public class SearchView extends VerticalLayout {
         });
 
         nextPage.addClickListener(event -> {
-            int maxPage = maxPageIndex();
-            if (currentPage >= maxPage) {
+            if (!hasNext) {
                 return;
             }
             loadPage(currentPage + 1);
@@ -168,32 +176,74 @@ public class SearchView extends VerticalLayout {
             pageIndex = 0;
         }
 
-        Page<LogSearchRow> page = logSearchService.search(query.getValue(), PageRequest.of(pageIndex, PAGE_SIZE));
-        totalItems = page.getTotalElements();
+        String q = query.getValue();
+        String qTrim = q == null ? "" : q.trim();
+
+        long token = ++searchToken;
         currentPage = pageIndex;
 
-        grid.setItems(page.getContent());
+        LogSearchService.SearchPage page = logSearchService.fetchPage(q, PageRequest.of(pageIndex, PAGE_SIZE));
+        hasNext = page.hasNext();
+        grid.setItems(page.items());
+
+        if (qTrim.isEmpty()) {
+            totalItems = null;
+            resultsCount.setText("");
+        } else {
+            totalItems = null;
+            resultsCount.setText("Counting...");
+            scheduleCountIfStable(token, qTrim);
+        }
 
         updatePager();
     }
 
     private void updatePager() {
-        int maxPage = maxPageIndex();
-        int totalPages = Math.max(1, maxPage + 1);
-        int pageNumber = Math.min(currentPage + 1, totalPages);
+        int pageNumber = currentPage + 1;
 
-        pageInfo.setText("Page " + pageNumber + " of " + totalPages + " (" + totalItems + " results)");
-        resultsCount.setText(totalItems + " results");
+        if (totalItems == null) {
+            pageInfo.setText("Page " + pageNumber);
+        } else {
+            int totalPages = Math.max(1, (int) ((totalItems - 1) / PAGE_SIZE) + 1);
+            pageInfo.setText("Page " + Math.min(pageNumber, totalPages) + " of " + totalPages + " (" + totalItems + " results)");
+            resultsCount.setText(totalItems + " results");
+        }
 
         prevPage.setEnabled(currentPage > 0);
-        nextPage.setEnabled(currentPage < maxPage);
+        nextPage.setEnabled(hasNext);
     }
 
-    private int maxPageIndex() {
-        if (totalItems <= 0) {
-            return 0;
+    private void scheduleCountIfStable(long token, String qTrim) {
+        // Don't run counts for empty queries. Also avoid re-counting if the query didn't change.
+        if (qTrim.isEmpty()) {
+            return;
         }
-        return (int) ((totalItems - 1) / PAGE_SIZE);
+        if (qTrim.equals(lastCountQuery) && totalItems != null) {
+            return;
+        }
+        lastCountQuery = qTrim;
+
+        UI ui = UI.getCurrent();
+        CompletableFuture
+                .supplyAsync(() -> logSearchService.countTotal(qTrim), searchCountExecutor)
+                .whenComplete((count, err) -> {
+                    if (err != null) {
+                        return;
+                    }
+                    ui.access(() -> {
+                        // Drop stale results (query changed / page reloaded).
+                        if (token != searchToken) {
+                            return;
+                        }
+                        String currentTrim = query.getValue() == null ? "" : query.getValue().trim();
+                        if (!qTrim.equals(currentTrim)) {
+                            return;
+                        }
+
+                        totalItems = count;
+                        updatePager();
+                    });
+                });
     }
 
     private String truncate(String value) {

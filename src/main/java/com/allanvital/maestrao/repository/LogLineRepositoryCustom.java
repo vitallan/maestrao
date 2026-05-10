@@ -13,5 +13,11 @@ public interface LogLineRepositoryCustom {
 
     Page<LogSearchRow> searchAdvanced(String freeText, List<String> kvTerms, String logName, Pageable pageable);
 
+    /**
+     * Fetch-only variant used to avoid blocking on COUNT(*) for large datasets.
+     * The caller can request (pageSize + 1) rows to determine whether a next page exists.
+     */
+    List<LogSearchRow> fetchAdvanced(String freeText, List<String> kvTerms, String logName, Pageable pageable, int limit);
+
     long countAdvanced(String freeText, List<String> kvTerms, String logName);
 }

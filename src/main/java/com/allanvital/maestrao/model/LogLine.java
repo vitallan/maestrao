@@ -31,7 +31,7 @@ public class LogLine {
     private Instant ingestedAt;
 
     @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "LONGTEXT")
     private String line;
 
     public Long getId() {

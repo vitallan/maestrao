@@ -25,6 +25,23 @@ public class LogSearchService {
         return logLineRepository.searchAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, pageable);
     }
 
+    public SearchPage fetchPage(String query, Pageable pageable) {
+        ParsedQuery parsed = parse(query);
+
+        int pageSize = pageable.getPageSize();
+        List<LogSearchRow> rows = logLineRepository.fetchAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, pageable, pageSize + 1);
+        boolean hasNext = rows.size() > pageSize;
+        if (hasNext) {
+            rows = rows.subList(0, pageSize);
+        }
+        return new SearchPage(rows, hasNext);
+    }
+
+    public long countTotal(String query) {
+        ParsedQuery parsed = parse(query);
+        return logLineRepository.countAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName);
+    }
+
     private String normalizeOptional(String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -177,5 +194,8 @@ public class LogSearchService {
     }
 
     private record ParsedQuery(String freeText, List<String> kvTerms, String logName) {
+    }
+
+    public record SearchPage(List<LogSearchRow> items, boolean hasNext) {
     }
 }
