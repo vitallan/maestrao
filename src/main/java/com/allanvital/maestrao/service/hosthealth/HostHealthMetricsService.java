@@ -39,7 +39,7 @@ public class HostHealthMetricsService {
         HostHealthWindow w = window == null ? HostHealthWindow.M15 : window;
         Instant from = w.since();
         List<HostHealthSample> samples = sampleRepository.findRecent(hostId, from);
-        log.info("hostMetrics.read hostId={} window={} samples={}", hostId, w.name(), samples.size());
+        log.debug("hostMetrics.read hostId={} window={} samples={}", hostId, w.name(), samples.size());
 
         List<Point> points = new ArrayList<>(samples.size());
         HostHealthSample prev = null;

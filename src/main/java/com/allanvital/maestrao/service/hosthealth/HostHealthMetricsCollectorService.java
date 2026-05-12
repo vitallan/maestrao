@@ -89,7 +89,7 @@ public class HostHealthMetricsCollectorService {
     )
     public void pollScheduled() {
         try {
-            log.info("hostMetrics.poll tick");
+            log.debug("hostMetrics.poll tick");
             pollOnce();
         } catch (RuntimeException e) {
             log.warn("hostMetrics.poll failed: {}", e.getMessage());
@@ -98,7 +98,7 @@ public class HostHealthMetricsCollectorService {
 
     public void pollOnce() {
         List<Host> hosts = hostRepository.findByGatherHealthMetricsTrueOrderByNameAsc();
-        log.info("hostMetrics.poll enabledHosts={}", hosts.size());
+        log.debug("hostMetrics.poll enabledHosts={}", hosts.size());
         if (hosts.isEmpty()) {
             return;
         }
@@ -231,7 +231,7 @@ public class HostHealthMetricsCollectorService {
 
             tx.executeWithoutResult(status -> sampleRepository.save(s));
             nextAllowedPollAtMillis.remove(hostId);
-            log.info("hostMetrics.poll hostId={} ip={} ok", hostId, host.getIp());
+            log.debug("hostMetrics.poll hostId={} ip={} ok", hostId, host.getIp());
         } catch (RuntimeException e) {
             log.warn("hostMetrics.poll hostId={} ip={} failed: {}", hostId, host.getIp(), e.getMessage());
             backoff(hostId);

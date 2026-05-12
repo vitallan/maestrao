@@ -30,6 +30,6 @@ public class HostHealthRetentionService {
     public void cleanup() {
         Instant cutoff = Instant.now().minus(retentionDays, ChronoUnit.DAYS);
         int deleted = sampleRepository.deleteOlderThan(cutoff);
-        log.info("hostMetrics.retention.cleanup deleted={} cutoff={}", deleted, cutoff);
+        log.debug("hostMetrics.retention.cleanup deleted={} cutoff={}", deleted, cutoff);
     }
 }
