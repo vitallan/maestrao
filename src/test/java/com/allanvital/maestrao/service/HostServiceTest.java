@@ -64,7 +64,8 @@ public class HostServiceTest {
                 "  192.168.0.10  ",
                 null,
                 "  Main app server  ",
-                credential.getId()
+                credential.getId(),
+                false
         );
 
         assertNotNull(host.getId());
@@ -86,7 +87,8 @@ public class HostServiceTest {
                 "server.local",
                 2222,
                 "   ",
-                credential.getId()
+                credential.getId(),
+                false
         );
 
         assertNotNull(host.getId());
@@ -106,7 +108,8 @@ public class HostServiceTest {
                 "192.168.0.10",
                 22,
                 "Old description",
-                oldCredential.getId()
+                oldCredential.getId(),
+                false
         );
 
         Host updatedHost = hostService.update(
@@ -115,7 +118,8 @@ public class HostServiceTest {
                 "  192.168.0.20  ",
                 2222,
                 "  New description  ",
-                newCredential.getId()
+                newCredential.getId(),
+                true
         );
 
         assertEquals(host.getId(), updatedHost.getId());
@@ -135,7 +139,8 @@ public class HostServiceTest {
                 "192.168.0.10",
                 22,
                 null,
-                credential.getId()
+                credential.getId(),
+                false
         );
 
         hostService.delete(host.getId());
@@ -148,9 +153,9 @@ public class HostServiceTest {
     void shouldFindAllWithPagination() {
         Credential credential = createPasswordCredential("Main credential", "root", "secret");
 
-        hostService.create("Host C", "192.168.0.30", 22, null, credential.getId());
-        hostService.create("Host A", "192.168.0.10", 22, null, credential.getId());
-        hostService.create("Host B", "192.168.0.20", 22, null, credential.getId());
+        hostService.create("Host C", "192.168.0.30", 22, null, credential.getId(), false);
+        hostService.create("Host A", "192.168.0.10", 22, null, credential.getId(), false);
+        hostService.create("Host B", "192.168.0.20", 22, null, credential.getId(), false);
 
         Page<Host> page = hostService.findAll(
                 PageRequest.of(0, 2, Sort.by(Sort.Direction.ASC, "name"))
@@ -167,27 +172,27 @@ public class HostServiceTest {
         Credential credential = createPasswordCredential("Main credential", "root", "secret");
 
         assertThrows(IllegalArgumentException.class, () ->
-                hostService.create("   ", "192.168.0.10", 22, null, credential.getId())
+                hostService.create("   ", "192.168.0.10", 22, null, credential.getId(), false)
         );
 
         assertThrows(IllegalArgumentException.class, () ->
-                hostService.create("Host", "   ", 22, null, credential.getId())
+                hostService.create("Host", "   ", 22, null, credential.getId(), false)
         );
 
         assertThrows(IllegalArgumentException.class, () ->
-                hostService.create("Host", "192.168.0.10", 0, null, credential.getId())
+                hostService.create("Host", "192.168.0.10", 0, null, credential.getId(), false)
         );
 
         assertThrows(IllegalArgumentException.class, () ->
-                hostService.create("Host", "192.168.0.10", 65536, null, credential.getId())
+                hostService.create("Host", "192.168.0.10", 65536, null, credential.getId(), false)
         );
 
         assertThrows(IllegalArgumentException.class, () ->
-                hostService.create("Host", "192.168.0.10", 22, null, null)
+                hostService.create("Host", "192.168.0.10", 22, null, null, false)
         );
 
         assertThrows(IllegalArgumentException.class, () ->
-                hostService.create("Host", "192.168.0.10", 22, null, 999L)
+                hostService.create("Host", "192.168.0.10", 22, null, 999L, false)
         );
     }
 
@@ -200,7 +205,8 @@ public class HostServiceTest {
                 "192.168.0.10",
                 2222,
                 null,
-                credential.getId()
+                credential.getId(),
+                false
         );
 
         fakeSshClient.setNextResult(HostConnectionTestResult.success("Connection successful"));
@@ -247,7 +253,8 @@ public class HostServiceTest {
                 "192.168.0.10",
                 22,
                 null,
-                credential.getId()
+                credential.getId(),
+                false
         );
 
         fakeSshClient.setNextResult(HostConnectionTestResult.failure("SSH connection failed"));

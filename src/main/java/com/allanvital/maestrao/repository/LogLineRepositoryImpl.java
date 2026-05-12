@@ -22,18 +22,18 @@ public class LogLineRepositoryImpl implements LogLineRepositoryCustom {
     private EntityManager entityManager;
 
     @Override
-    public Page<LogSearchRow> searchAdvanced(String freeText, List<String> kvTerms, String logName, Pageable pageable) {
+    public Page<LogSearchRow> searchAdvanced(List<String> tokens, String logName, Pageable pageable) {
         // Kept for compatibility with existing callers; delegates to interface default.
-        return LogLineRepositoryCustom.super.searchAdvanced(freeText, kvTerms, logName, pageable);
+        return LogLineRepositoryCustom.super.searchAdvanced(tokens, logName, pageable);
     }
 
     @Override
-    public List<LogSearchRow> fetchAdvanced(String freeText, List<String> kvTerms, String logName, Instant since, Pageable pageable, int limit) {
-        if (kvTerms == null) {
-            kvTerms = List.of();
+    public List<LogSearchRow> fetchAdvanced(List<String> tokens, String logName, Instant since, Pageable pageable, int limit) {
+        if (tokens == null) {
+            tokens = List.of();
         }
 
-        QueryParts parts = buildSearchQueryParts(freeText, kvTerms, logName, since);
+        QueryParts parts = buildSearchQueryParts(tokens, logName, since);
         TypedQuery<LogSearchRow> query = entityManager.createQuery(parts.jpql, LogSearchRow.class);
         for (Param p : parts.params) {
             query.setParameter(p.name, p.value);
@@ -47,9 +47,9 @@ public class LogLineRepositoryImpl implements LogLineRepositoryCustom {
     }
 
     @Override
-    public long countAdvanced(String freeText, List<String> kvTerms, String logName, Instant since) {
-        if (kvTerms == null) {
-            kvTerms = List.of();
+    public long countAdvanced(List<String> tokens, String logName, Instant since) {
+        if (tokens == null) {
+            tokens = List.of();
         }
 
         StringBuilder jpql = new StringBuilder();
@@ -62,25 +62,14 @@ public class LogLineRepositoryImpl implements LogLineRepositoryCustom {
             params.add(new Param("since", since));
         }
 
-        if (freeText != null && !freeText.isBlank()) {
-            jpql.append("and lower(cast(l.line as string)) like :freeText ");
-            params.add(new Param("freeText", like(freeText)));
-        }
+        appendTokenFilters(jpql, params, tokens);
 
         if (logName != null && !logName.isBlank()) {
             jpql.append("and lower(s.name) = :logName ");
             params.add(new Param("logName", logName.toLowerCase()));
         }
 
-        for (int i = 0; i < kvTerms.size(); i++) {
-            String term = kvTerms.get(i);
-            if (term == null || term.isBlank()) {
-                continue;
-            }
-            String name = "kv" + i;
-            jpql.append("and lower(cast(l.line as string)) like :").append(name).append(" ");
-            params.add(new Param(name, like(term)));
-        }
+        // token filters appended above
 
         TypedQuery<Long> query = entityManager.createQuery(jpql.toString(), Long.class);
         for (Param p : params) {
@@ -194,7 +183,7 @@ public class LogLineRepositoryImpl implements LogLineRepositoryCustom {
         return "%" + value.toLowerCase() + "%";
     }
 
-    private QueryParts buildSearchQueryParts(String freeText, List<String> kvTerms, String logName, Instant since) {
+    private QueryParts buildSearchQueryParts(List<String> tokens, String logName, Instant since) {
         StringBuilder jpql = new StringBuilder();
         jpql.append("select new com.allanvital.maestrao.service.log.search.LogSearchRow(");
         jpql.append("l.id, s.name, h.name, h.ip, l.ingestedAt, l.line");
@@ -211,28 +200,32 @@ public class LogLineRepositoryImpl implements LogLineRepositoryCustom {
             params.add(new Param("since", since));
         }
 
-        if (freeText != null && !freeText.isBlank()) {
-            jpql.append("and lower(cast(l.line as string)) like :freeText ");
-            params.add(new Param("freeText", like(freeText)));
-        }
+        appendTokenFilters(jpql, params, tokens);
 
         if (logName != null && !logName.isBlank()) {
             jpql.append("and lower(s.name) = :logName ");
             params.add(new Param("logName", logName.toLowerCase()));
         }
 
-        for (int i = 0; i < kvTerms.size(); i++) {
-            String term = kvTerms.get(i);
-            if (term == null || term.isBlank()) {
-                continue;
-            }
-            String name = "kv" + i;
-            jpql.append("and lower(cast(l.line as string)) like :").append(name).append(" ");
-            params.add(new Param(name, like(term)));
-        }
+        // token filters appended above
 
         jpql.append("order by l.ingestedAt desc");
         return new QueryParts(jpql.toString(), params);
+    }
+
+    private void appendTokenFilters(StringBuilder jpql, List<Param> params, List<String> tokens) {
+        if (tokens == null || tokens.isEmpty()) {
+            return;
+        }
+        int n = 0;
+        for (String t : tokens) {
+            if (t == null || t.isBlank()) {
+                continue;
+            }
+            String name = "t" + (n++);
+            jpql.append("and lower(cast(l.line as string)) like :").append(name).append(" ");
+            params.add(new Param(name, like(t)));
+        }
     }
 
     private record QueryParts(String jpql, List<Param> params) {

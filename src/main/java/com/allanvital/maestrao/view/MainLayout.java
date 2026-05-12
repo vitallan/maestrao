@@ -69,6 +69,7 @@ public class MainLayout extends AppLayout {
                 new SideNavItem("Dashboard", DashboardView.class, VaadinIcon.DASHBOARD.create()),
                 new SideNavItem("Credentials", CredentialsView.class, VaadinIcon.USER.create()),
                 new SideNavItem("Hosts", HostsView.class, VaadinIcon.SERVER.create()),
+                new SideNavItem("Host Health", HostHealthView.class, VaadinIcon.LINE_CHART.create()),
                 new SideNavItem("Logs", LogsView.class, VaadinIcon.FILE_TEXT.create()),
                 new SideNavItem("Jobs", JobsView.class, VaadinIcon.TOOLS.create()),
                 new SideNavItem("Search", SearchView.class, VaadinIcon.SEARCH.create()),

@@ -31,6 +31,9 @@ public class Host {
     @JoinColumn(name = "credential_id", nullable = false)
     private Credential credential;
 
+    @Column(name = "gather_health_metrics", nullable = false)
+    private boolean gatherHealthMetrics;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -99,6 +102,14 @@ public class Host {
 
     public void setCredential(Credential credential) {
         this.credential = credential;
+    }
+
+    public boolean isGatherHealthMetrics() {
+        return gatherHealthMetrics;
+    }
+
+    public void setGatherHealthMetrics(boolean gatherHealthMetrics) {
+        this.gatherHealthMetrics = gatherHealthMetrics;
     }
 
     public Instant getCreatedAt() {

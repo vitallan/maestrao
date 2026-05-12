@@ -77,20 +77,7 @@ class LogSearchServiceTest {
     }
 
     @Test
-    void keyValueTokensAreAndFilters() {
-        LogSource source = createSource("h1", "10.0.0.1");
-        insertLine(source, Instant.parse("2026-05-05T10:00:00Z"), "service=api level=info hello");
-        insertLine(source, Instant.parse("2026-05-05T10:01:00Z"), "service=api level=error boom");
-        insertLine(source, Instant.parse("2026-05-05T10:02:00Z"), "service=web level=error nope");
-
-        Page<LogSearchRow> page = logSearchService.search("service=api level=error", PageRequest.of(0, 10));
-        assertEquals(1, page.getTotalElements());
-        assertTrue(page.getContent().get(0).line().contains("service=api"));
-        assertTrue(page.getContent().get(0).line().contains("level=error"));
-    }
-
-    @Test
-    void freeTextAndKeyValueMustBothMatch() {
+    void multipleTermsAreAndFilters() {
         LogSource source = createSource("h1", "10.0.0.1");
         insertLine(source, Instant.parse("2026-05-05T10:00:00Z"), "service=api timeout while connecting");
         insertLine(source, Instant.parse("2026-05-05T10:01:00Z"), "service=api all good");
@@ -99,15 +86,6 @@ class LogSearchServiceTest {
         assertEquals(1, page.getTotalElements());
         assertTrue(page.getContent().get(0).line().toLowerCase().contains("timeout"));
         assertTrue(page.getContent().get(0).line().toLowerCase().contains("service=api"));
-    }
-
-    @Test
-    void keyValueIsCaseInsensitive() {
-        LogSource source = createSource("h1", "10.0.0.1");
-        insertLine(source, Instant.parse("2026-05-05T10:00:00Z"), "service=api hello");
-
-        Page<LogSearchRow> page = logSearchService.search("SERVICE=API", PageRequest.of(0, 10));
-        assertEquals(1, page.getTotalElements());
     }
 
     @Test
@@ -192,13 +170,13 @@ class LogSearchServiceTest {
 
     private LogSource createSource(String hostName, String ip) {
         Credential credential = credentialService.create("cred-" + hostName, CredentialType.PASSWORD, "root", "secret", null);
-        Host host = hostService.create(hostName, ip, 22, null, credential.getId());
+        Host host = hostService.create(hostName, ip, 22, null, credential.getId(), false);
         return logSourceService.createLogFile("src-" + hostName, host.getId(), "/var/log/app.log", false);
     }
 
     private LogSource createSourceWithName(String hostName, String ip, String logName) {
         Credential credential = credentialService.create("cred-" + hostName, CredentialType.PASSWORD, "root", "secret", null);
-        Host host = hostService.create(hostName, ip, 22, null, credential.getId());
+        Host host = hostService.create(hostName, ip, 22, null, credential.getId(), false);
         return logSourceService.createLogFile(logName, host.getId(), "/var/log/app.log", false);
     }
 

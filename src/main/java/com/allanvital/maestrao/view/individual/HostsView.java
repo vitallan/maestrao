@@ -20,6 +20,7 @@ import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.textfield.IntegerField;
 import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
@@ -186,6 +187,9 @@ public class HostsView extends VerticalLayout {
         description.setWidthFull();
         description.setMaxLength(500);
 
+        Checkbox gatherHealthMetrics = new Checkbox("Gather host health metrics?");
+        gatherHealthMetrics.setHelperText("If enabled, Maestrao will poll this host every 15 seconds to collect basic health metrics.");
+
         if (editing) {
             name.setValue(valueOrEmpty(host.getName()));
             ip.setValue(valueOrEmpty(host.getIp()));
@@ -195,14 +199,16 @@ public class HostsView extends VerticalLayout {
                     .findFirst()
                     .ifPresent(credential::setValue);
             description.setValue(valueOrEmpty(host.getDescription()));
+            gatherHealthMetrics.setValue(host.isGatherHealthMetrics());
         }
 
-        FormLayout form = new FormLayout(name, ip, sshPort, credential, description);
+        FormLayout form = new FormLayout(name, ip, sshPort, credential, description, gatherHealthMetrics);
         form.setResponsiveSteps(
                 new FormLayout.ResponsiveStep("0", 1),
                 new FormLayout.ResponsiveStep("520px", 2)
         );
         form.setColspan(description, 2);
+        form.setColspan(gatherHealthMetrics, 2);
 
         Span testConnectionResult = new Span();
         testConnectionResult.getStyle().set("font-weight", "600");
@@ -245,7 +251,8 @@ public class HostsView extends VerticalLayout {
                             ip.getValue(),
                             sshPort.getValue(),
                             description.getValue(),
-                            credential.getValue().getId()
+                            credential.getValue().getId(),
+                            gatherHealthMetrics.getValue()
                     );
                     showSuccess("Host updated");
                 } else {
@@ -254,7 +261,8 @@ public class HostsView extends VerticalLayout {
                             ip.getValue(),
                             sshPort.getValue(),
                             description.getValue(),
-                            credential.getValue().getId()
+                            credential.getValue().getId(),
+                            gatherHealthMetrics.getValue()
                     );
                     showSuccess("Host created");
                 }

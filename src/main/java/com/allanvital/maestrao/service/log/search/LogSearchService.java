@@ -25,15 +25,15 @@ public class LogSearchService {
 
     public Page<LogSearchRow> search(String query, Pageable pageable) {
         ParsedQuery parsed = parse(query);
-        return logLineRepository.searchAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, pageable);
+        return logLineRepository.searchAdvanced(parsed.tokens, parsed.logName, pageable);
     }
 
     public SearchPage fetchPage(String query, Pageable pageable) {
-        return fetchPage(query, SearchWindow.H24, pageable);
+        return fetchPage(query, SearchWindow.H1, pageable);
     }
 
     public long countTotal(String query) {
-        return countTotal(query, SearchWindow.H24);
+        return countTotal(query, SearchWindow.H1);
     }
 
     public SearchPage fetchPage(String query, SearchWindow window, Pageable pageable) {
@@ -45,7 +45,6 @@ public class LogSearchService {
 
         String freeText = normalizeOptional(parsed.freeText);
         boolean canUseFullText = freeText != null
-                && (parsed.kvTerms == null || parsed.kvTerms.isEmpty())
                 && mySqlFullTextSupport.isFullTextAvailable();
 
         if (canUseFullText) {
@@ -53,10 +52,10 @@ public class LogSearchService {
             if (booleanQuery != null) {
                 rows = logLineRepository.fetchFullText(booleanQuery, parsed.logName, since, pageable, pageSize + 1);
             } else {
-                rows = logLineRepository.fetchAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, since, pageable, pageSize + 1);
+                rows = logLineRepository.fetchAdvanced(parsed.tokens, parsed.logName, since, pageable, pageSize + 1);
             }
         } else {
-            rows = logLineRepository.fetchAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, since, pageable, pageSize + 1);
+            rows = logLineRepository.fetchAdvanced(parsed.tokens, parsed.logName, since, pageable, pageSize + 1);
         }
 
         boolean hasNext = rows.size() > pageSize;
@@ -72,7 +71,6 @@ public class LogSearchService {
 
         String freeText = normalizeOptional(parsed.freeText);
         boolean canUseFullText = freeText != null
-                && (parsed.kvTerms == null || parsed.kvTerms.isEmpty())
                 && mySqlFullTextSupport.isFullTextAvailable();
 
         if (canUseFullText) {
@@ -81,7 +79,7 @@ public class LogSearchService {
                 return logLineRepository.countFullText(booleanQuery, parsed.logName, since);
             }
         }
-        return logLineRepository.countAdvanced(parsed.freeText, parsed.kvTerms, parsed.logName, since);
+        return logLineRepository.countAdvanced(parsed.tokens, parsed.logName, since);
     }
 
     private String normalizeOptional(String value) {
@@ -98,8 +96,7 @@ public class LogSearchService {
         }
 
         List<Token> tokens = tokenize(normalized);
-        List<String> nonKv = new ArrayList<>();
-        List<String> kvTerms = new ArrayList<>();
+        List<String> nonLog = new ArrayList<>();
         String logName = null;
 
         for (int i = 0; i < tokens.size(); i++) {
@@ -125,12 +122,12 @@ public class LogSearchService {
                 if (value == null) {
                     // While typing, the query can temporarily contain `log:` without a value.
                     // Be resilient: treat it as free text until the user provides a value.
-                    nonKv.add(token);
+                    nonLog.add(token);
                     continue;
                 }
                 if (logName != null) {
                     // Be forgiving: treat additional log: operators as plain text.
-                    nonKv.add(token);
+                    nonLog.add(token);
                     continue;
                 }
                 // Whitespace is required between tokens.
@@ -138,29 +135,30 @@ public class LogSearchService {
                 // mark it as having trailing chars after a quoted segment.
                 if (t.hadQuote && t.trailingAfterQuote) {
                     // While typing, this can also happen transiently. Treat as plain text.
-                    nonKv.add(token);
+                    nonLog.add(token);
                     continue;
                 }
                 logName = value;
                 continue;
             }
 
-            int eq = token.indexOf('=');
-            if (eq > 0 && eq < token.length() - 1) {
-                String key = token.substring(0, eq).trim();
-                String value = token.substring(eq + 1).trim();
-                if (!key.isBlank() && !value.isBlank()) {
-                    kvTerms.add(key + "=" + value);
-                    continue;
-                }
-            }
-            nonKv.add(token);
+            nonLog.add(token);
         }
 
-        String freeText = nonKv.isEmpty() ? null : String.join(" ", nonKv);
+        String freeText = nonLog.isEmpty() ? null : String.join(" ", nonLog);
         freeText = normalizeOptional(freeText);
 
-        return new ParsedQuery(freeText, kvTerms, logName);
+        List<String> termTokens = new ArrayList<>();
+        if (freeText != null) {
+            for (String part : freeText.split("\\s+")) {
+                String p = normalizeOptional(part);
+                if (p != null) {
+                    termTokens.add(p);
+                }
+            }
+        }
+
+        return new ParsedQuery(freeText, termTokens, logName);
     }
 
     private List<Token> tokenize(String input) {
@@ -235,7 +233,7 @@ public class LogSearchService {
     private record Token(String value, boolean hadQuote, boolean trailingAfterQuote) {
     }
 
-    private record ParsedQuery(String freeText, List<String> kvTerms, String logName) {
+    private record ParsedQuery(String freeText, List<String> tokens, String logName) {
     }
 
     public record SearchPage(List<LogSearchRow> items, boolean hasNext) {
@@ -253,7 +251,12 @@ public class LogSearchService {
             }
             String cleaned = sanitizeFullTextTerm(raw);
             if (cleaned != null) {
-                terms.add(cleaned);
+                for (String p : cleaned.split("\\s+")) {
+                    String pp = normalizeOptional(p);
+                    if (pp != null) {
+                        terms.add(pp);
+                    }
+                }
             }
         }
 
@@ -279,7 +282,9 @@ public class LogSearchService {
             return null;
         }
 
+        // Split punctuation into separators so things like `service=api` become meaningful terms.
         StringBuilder out = new StringBuilder(trimmed.length());
+        boolean lastWasSpace = false;
         for (int i = 0; i < trimmed.length(); i++) {
             char c = trimmed.charAt(i);
             boolean ok = (c >= 'a' && c <= 'z')
@@ -288,10 +293,20 @@ public class LogSearchService {
                     || c == '_' || c == '.' || c == '/' || c == ':' || c == '-';
             if (ok) {
                 out.append(c);
+                lastWasSpace = false;
+            } else {
+                if (!lastWasSpace) {
+                    out.append(' ');
+                    lastWasSpace = true;
+                }
             }
         }
 
-        String result = out.toString();
-        return result.isBlank() ? null : result;
+        String result = out.toString().trim();
+        if (result.isBlank()) {
+            return null;
+        }
+        // Caller splits on whitespace; returning multiple words here is fine.
+        return result;
     }
 }

@@ -64,7 +64,7 @@ class LogCollectorManagerTest {
     @Test
     void shouldIngestThenReconnectAfterDisconnect() {
         Credential credential = credentialService.create("cred", CredentialType.PASSWORD, "root", "secret", null);
-        Host host = hostService.create("server", "server.local", 22, null, credential.getId());
+        Host host = hostService.create("server", "server.local", 22, null, credential.getId(), false);
 
         FakeSshClient.FakeExecHandle first = fakeSshClient.enqueueExecHandle();
         FakeSshClient.FakeExecHandle second = fakeSshClient.enqueueExecHandle();

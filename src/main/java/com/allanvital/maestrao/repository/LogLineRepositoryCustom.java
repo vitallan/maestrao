@@ -14,28 +14,28 @@ import java.util.List;
  */
 public interface LogLineRepositoryCustom {
 
-    default Page<LogSearchRow> searchAdvanced(String freeText, List<String> kvTerms, String logName, Pageable pageable) {
+    default Page<LogSearchRow> searchAdvanced(List<String> tokens, String logName, Pageable pageable) {
         int pageSize = pageable.getPageSize();
-        List<LogSearchRow> content = fetchAdvanced(freeText, kvTerms, logName, null, pageable, pageSize);
-        long total = countAdvanced(freeText, kvTerms, logName, null);
+        List<LogSearchRow> content = fetchAdvanced(tokens, logName, null, pageable, pageSize);
+        long total = countAdvanced(tokens, logName, null);
         return new PageImpl<>(content, pageable, total);
     }
 
-    default List<LogSearchRow> fetchAdvanced(String freeText, List<String> kvTerms, String logName, Pageable pageable, int limit) {
-        return fetchAdvanced(freeText, kvTerms, logName, null, pageable, limit);
+    default List<LogSearchRow> fetchAdvanced(List<String> tokens, String logName, Pageable pageable, int limit) {
+        return fetchAdvanced(tokens, logName, null, pageable, limit);
     }
 
-    default long countAdvanced(String freeText, List<String> kvTerms, String logName) {
-        return countAdvanced(freeText, kvTerms, logName, null);
+    default long countAdvanced(List<String> tokens, String logName) {
+        return countAdvanced(tokens, logName, null);
     }
 
     /**
      * Fetch-only variant used to avoid blocking on COUNT(*) for large datasets.
      * The caller can request (pageSize + 1) rows to determine whether a next page exists.
      */
-    List<LogSearchRow> fetchAdvanced(String freeText, List<String> kvTerms, String logName, Instant since, Pageable pageable, int limit);
+    List<LogSearchRow> fetchAdvanced(List<String> tokens, String logName, Instant since, Pageable pageable, int limit);
 
-    long countAdvanced(String freeText, List<String> kvTerms, String logName, Instant since);
+    long countAdvanced(List<String> tokens, String logName, Instant since);
 
     List<LogSearchRow> fetchFullText(String booleanQuery, String logName, Instant since, Pageable pageable, int limit);
 

@@ -216,27 +216,17 @@ public class JschSshClient implements SshClient {
             session.connect(CONNECT_TIMEOUT_MILLIS);
 
             channel = (ChannelExec) session.openChannel("exec");
+            channel.setPty(true);
             channel.setCommand(command);
             channel.setInputStream(stdin == null ? null : new ByteArrayInputStream(stdin));
+            LimitedCaptureOutputStream stdoutCap = new LimitedCaptureOutputStream(safeMaxStdoutBytes);
+            LimitedCaptureOutputStream stderrCap = new LimitedCaptureOutputStream(safeMaxStderrBytes);
+            channel.setOutputStream(stdoutCap, true);
+            channel.setErrStream(stderrCap, true);
             channel.connect(CONNECT_TIMEOUT_MILLIS);
 
-            InputStream stdout = channel.getInputStream();
-            InputStream stderr;
-            try {
-                stderr = channel.getExtInputStream();
-            } catch (IOException e) {
-                stderr = InputStream.nullInputStream();
-            }
-
-            ByteArrayOutputStream stdoutBuf = new ByteArrayOutputStream(Math.min(8192, safeMaxStdoutBytes));
-            ByteArrayOutputStream stderrBuf = new ByteArrayOutputStream(Math.min(8192, safeMaxStderrBytes));
-
-            boolean truncatedOut = false;
-            boolean truncatedErr = false;
             long deadline = System.currentTimeMillis() + safeTimeoutMillis;
-
-            byte[] tmp = new byte[4096];
-            while (true) {
+            while (!channel.isClosed()) {
                 if (System.currentTimeMillis() > deadline) {
                     try {
                         channel.disconnect();
@@ -247,25 +237,12 @@ public class JschSshClient implements SshClient {
                     } catch (RuntimeException ignored) {
                     }
                     return new SshExecResult(null,
-                            stdoutBuf.toString(StandardCharsets.UTF_8),
-                            stderrBuf.toString(StandardCharsets.UTF_8),
-                            truncatedOut,
-                            truncatedErr,
+                            stdoutCap.asString(),
+                            stderrCap.asString(),
+                            stdoutCap.truncated,
+                            stderrCap.truncated,
                             true);
                 }
-
-                truncatedOut |= drainAvailable(stdout, stdoutBuf, safeMaxStdoutBytes, tmp);
-                truncatedErr |= drainAvailable(stderr, stderrBuf, safeMaxStderrBytes, tmp);
-
-                if (channel.isClosed()) {
-                    // Drain whatever is still buffered after close.
-                    truncatedOut |= drainAvailable(stdout, stdoutBuf, safeMaxStdoutBytes, tmp);
-                    truncatedErr |= drainAvailable(stderr, stderrBuf, safeMaxStderrBytes, tmp);
-                    if (safeAvailable(stdout) == 0 && safeAvailable(stderr) == 0) {
-                        break;
-                    }
-                }
-
                 try {
                     Thread.sleep(10);
                 } catch (InterruptedException e) {
@@ -274,14 +251,15 @@ public class JschSshClient implements SshClient {
                 }
             }
 
-            Integer exitCode = channel.getExitStatus();
-            return new SshExecResult(exitCode,
-                    stdoutBuf.toString(StandardCharsets.UTF_8),
-                    stderrBuf.toString(StandardCharsets.UTF_8),
-                    truncatedOut,
-                    truncatedErr,
-                    false);
-        } catch (JSchException | IOException e) {
+            return new SshExecResult(
+                    channel.getExitStatus(),
+                    stdoutCap.asString(),
+                    stderrCap.asString(),
+                    stdoutCap.truncated,
+                    stderrCap.truncated,
+                    false
+            );
+        } catch (JSchException e) {
             throw new IllegalStateException("SSH exec failed: " + e.getMessage(), e);
         } finally {
             if (channel != null && channel.isConnected()) {
@@ -296,6 +274,48 @@ public class JschSshClient implements SshClient {
                 } catch (RuntimeException ignored) {
                 }
             }
+        }
+    }
+
+    private static class LimitedCaptureOutputStream extends java.io.OutputStream {
+        private final ByteArrayOutputStream delegate;
+        private final int maxBytes;
+        private boolean truncated;
+
+        private LimitedCaptureOutputStream(int maxBytes) {
+            this.maxBytes = Math.max(0, maxBytes);
+            this.delegate = new ByteArrayOutputStream(Math.min(8192, Math.max(0, maxBytes)));
+            this.truncated = false;
+        }
+
+        @Override
+        public void write(int b) {
+            if (delegate.size() < maxBytes) {
+                delegate.write(b);
+            } else {
+                truncated = true;
+            }
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) {
+            if (b == null || len <= 0) {
+                return;
+            }
+            int remaining = maxBytes - delegate.size();
+            if (remaining <= 0) {
+                truncated = true;
+                return;
+            }
+            int toWrite = Math.min(remaining, len);
+            delegate.write(b, off, toWrite);
+            if (toWrite < len) {
+                truncated = true;
+            }
+        }
+
+        private String asString() {
+            return delegate.toString(StandardCharsets.UTF_8);
         }
     }
 
@@ -341,6 +361,60 @@ public class JschSshClient implements SshClient {
                 break;
             }
             out.write(tmp, 0, n);
+        }
+        return truncated;
+    }
+
+    private boolean drainAfterCloseBounded(InputStream in,
+                                           ByteArrayOutputStream out,
+                                           int maxBytes,
+                                           byte[] tmp,
+                                           long maxMillis) throws IOException {
+        if (in == null) {
+            return false;
+        }
+
+        boolean truncated = false;
+        long deadline = System.currentTimeMillis() + Math.max(1, maxMillis);
+        while (System.currentTimeMillis() < deadline) {
+            int avail;
+            try {
+                avail = in.available();
+            } catch (IOException e) {
+                break;
+            }
+
+            if (avail <= 0) {
+                try {
+                    Thread.sleep(5);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                continue;
+            }
+
+            int n = in.read(tmp, 0, Math.min(tmp.length, avail));
+            if (n <= 0) {
+                break;
+            }
+
+            if (maxBytes <= 0) {
+                truncated = true;
+                continue;
+            }
+
+            int remaining = maxBytes - out.size();
+            if (remaining <= 0) {
+                truncated = true;
+                continue;
+            }
+
+            int toWrite = Math.min(remaining, n);
+            out.write(tmp, 0, toWrite);
+            if (toWrite < n) {
+                truncated = true;
+            }
         }
         return truncated;
     }

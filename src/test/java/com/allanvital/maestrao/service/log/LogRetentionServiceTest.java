@@ -52,7 +52,7 @@ class LogRetentionServiceTest {
     @Test
     void shouldDeleteOlderThanRetentionCutoff() {
         var credential = credentialService.create("cred", CredentialType.PASSWORD, "root", "secret", null);
-        var host = hostService.create("server", "server.local", 22, null, credential.getId());
+        var host = hostService.create("server", "server.local", 22, null, credential.getId(), false);
         LogSource source = logSourceService.createLogFile("App", host.getId(), "/var/log/app.log", false);
 
         LogLine oldLine = new LogLine();

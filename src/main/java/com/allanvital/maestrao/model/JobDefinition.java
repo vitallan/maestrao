@@ -28,7 +28,7 @@ public class JobDefinition {
     private boolean useSudo;
 
     @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "LONGTEXT")
     private String content;
 
     @ManyToMany(fetch = FetchType.LAZY)

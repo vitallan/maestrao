@@ -97,7 +97,7 @@ public class SearchView extends VerticalLayout {
 
         window.setItems(SearchWindow.values());
         window.setItemLabelGenerator(SearchWindow::label);
-        window.setValue(SearchWindow.H24);
+        window.setValue(SearchWindow.H1);
         window.addValueChangeListener(event -> {
             currentPage = 0;
             loadPage(0);
@@ -193,7 +193,7 @@ public class SearchView extends VerticalLayout {
         long token = ++searchToken;
         currentPage = pageIndex;
 
-        SearchWindow selectedWindow = window.getValue() == null ? SearchWindow.H24 : window.getValue();
+        SearchWindow selectedWindow = window.getValue() == null ? SearchWindow.H1 : window.getValue();
         LogSearchService.SearchPage page = logSearchService.fetchPage(q, selectedWindow, PageRequest.of(pageIndex, PAGE_SIZE));
         hasNext = page.hasNext();
         grid.setItems(page.items());

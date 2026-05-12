@@ -55,9 +55,10 @@ public class HostService {
                        String ip,
                        Integer sshPort,
                        String description,
-                       Long credentialId) {
+                       Long credentialId,
+                       boolean gatherHealthMetrics) {
         Host host = new Host();
-        setHostInternals(host, name, ip, sshPort, description, credentialId);
+        setHostInternals(host, name, ip, sshPort, description, credentialId, gatherHealthMetrics);
 
         Host saved = hostRepository.save(host);
         log.info("host.create id={} name={} ip={} port={} credentialId={}",
@@ -72,11 +73,12 @@ public class HostService {
                        String ip,
                        Integer sshPort,
                        String description,
-                       Long credentialId) {
+                       Long credentialId,
+                       boolean gatherHealthMetrics) {
 
         Host host = hostRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Host not found: " + id));
-        setHostInternals(host, name, ip, sshPort, description, credentialId);
+        setHostInternals(host, name, ip, sshPort, description, credentialId, gatherHealthMetrics);
 
         Host saved = hostRepository.save(host);
         log.info("host.update id={} name={} ip={} port={} credentialId={}",
@@ -148,12 +150,19 @@ public class HostService {
         return port;
     }
 
-    private void setHostInternals(Host host, String name, String ip, Integer sshPort, String description, Long credentialId) {
+    private void setHostInternals(Host host,
+                                  String name,
+                                  String ip,
+                                  Integer sshPort,
+                                  String description,
+                                  Long credentialId,
+                                  boolean gatherHealthMetrics) {
         host.setName(normalizeRequired(name, "name"));
         host.setIp(normalizeRequired(ip, "ip"));
         host.setSshPort(normalizePort(sshPort));
         host.setDescription(normalizeOptional(description));
         host.setCredential(findCredential(credentialId));
+        host.setGatherHealthMetrics(gatherHealthMetrics);
     }
 
 }

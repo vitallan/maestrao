@@ -140,7 +140,8 @@ class LogSourceServiceTest {
                 "server.local",
                 22,
                 null,
-                credential.getId()
+                credential.getId(),
+                false
         );
     }
 }

@@ -161,7 +161,7 @@ public class JobRunnerServiceTest {
 
     private Long createHost(String name, String ip) {
         Credential credential = credentialService.create("cred", CredentialType.PASSWORD, "root", "pw", null);
-        Host host = hostService.create(name, ip, 22, null, credential.getId());
+        Host host = hostService.create(name, ip, 22, null, credential.getId(), false);
         return host.getId();
     }
 

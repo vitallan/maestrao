@@ -132,6 +132,6 @@ class JobQueryServiceTest {
 
     private Host createHost(String name, String ip) {
         Credential credential = credentialService.create("cred-" + name, CredentialType.PASSWORD, "root", "pw", null);
-        return hostService.create(name, ip, 22, null, credential.getId());
+        return hostService.create(name, ip, 22, null, credential.getId(), false);
     }
 }
