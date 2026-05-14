@@ -404,7 +404,25 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
         });
         run.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
 
-        VerticalLayout layout = new VerticalLayout(new HorizontalLayout(run, refresh), runs, execs);
+        Button abortSelectedRun = new Button("Abort Run", event -> {
+            JobRun selected = runs.asSingleSelect().getValue();
+            if (selected == null || selected.getId() == null) {
+                showError("Select a run first");
+                return;
+            }
+            try {
+                jobRunnerService.requestAbortRun(selected.getId());
+                showSuccess("Abort requested for run " + selected.getId());
+                runs.getDataProvider().refreshAll();
+                selectedRunId[0] = selected.getId();
+                execs.getDataProvider().refreshAll();
+            } catch (RuntimeException e) {
+                showError(e.getMessage());
+            }
+        });
+        abortSelectedRun.addThemeVariants(ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_TERTIARY);
+
+        VerticalLayout layout = new VerticalLayout(new HorizontalLayout(run, abortSelectedRun, refresh), runs, execs);
         layout.setSizeFull();
         layout.expand(runs, execs);
 
