@@ -1,6 +1,7 @@
 package com.allanvital.maestrao.repository;
 
 import com.allanvital.maestrao.model.JobRun;
+import com.allanvital.maestrao.model.JobRunStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
@@ -43,4 +44,14 @@ public interface JobRunRepository extends JpaRepository<JobRun, Long> {
             order by r.id asc
             """)
     List<JobRun> findRunsStartedBetweenWithJobDefinition(@Param("from") Instant from, @Param("to") Instant to);
+
+    @Query("""
+            select new com.allanvital.maestrao.repository.JobRunningStateRow(r.jobDefinition.id)
+            from JobRun r
+            where r.jobDefinition.id in :jobDefinitionIds
+              and r.status = :status
+            group by r.jobDefinition.id
+            """)
+    List<JobRunningStateRow> findRunningJobDefinitionIds(@Param("jobDefinitionIds") List<Long> jobDefinitionIds,
+                                                         @Param("status") JobRunStatus status);
 }

@@ -6,6 +6,9 @@ import com.allanvital.maestrao.service.HostService;
 import com.allanvital.maestrao.service.job.JobDefinitionService;
 import com.allanvital.maestrao.service.job.JobQueryService;
 import com.allanvital.maestrao.service.job.JobRunnerService;
+import com.allanvital.maestrao.service.job.schedule.JobScheduleService;
+import com.allanvital.maestrao.view.component.LiveIndicator;
+import com.allanvital.maestrao.view.component.StatusBadge;
 import com.allanvital.maestrao.view.MainLayout;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
@@ -31,11 +34,14 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
+import com.vaadin.flow.shared.Registration;
 import jakarta.annotation.security.PermitAll;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 
 import java.time.ZoneId;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Objects;
@@ -55,9 +61,10 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
     private final JobDefinitionService jobDefinitionService;
     private final JobRunnerService jobRunnerService;
     private final JobQueryService jobQueryService;
+    private final JobScheduleService jobScheduleService;
     private final HostService hostService;
 
-    private final Grid<JobDefinitionListRow> grid = new Grid<>(JobDefinitionListRow.class, false);
+    private final Grid<JobTableRow> grid = new Grid<>(JobTableRow.class, false);
 
     private final DateTimeFormatter dateTimeFormatter = DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -66,10 +73,12 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
     public JobsView(JobDefinitionService jobDefinitionService,
                     JobRunnerService jobRunnerService,
                     JobQueryService jobQueryService,
+                    JobScheduleService jobScheduleService,
                     HostService hostService) {
         this.jobDefinitionService = jobDefinitionService;
         this.jobRunnerService = jobRunnerService;
         this.jobQueryService = jobQueryService;
+        this.jobScheduleService = jobScheduleService;
         this.hostService = hostService;
 
         setSizeFull();
@@ -104,7 +113,7 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
         grid.setSizeFull();
         grid.setPageSize(PAGE_SIZE);
 
-        grid.addColumn(JobDefinitionListRow::name)
+        grid.addColumn(JobTableRow::name)
                 .setHeader("Name")
                 .setAutoWidth(true)
                 .setSortable(false);
@@ -119,13 +128,18 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
                 .setAutoWidth(true)
                 .setSortable(false);
 
-        grid.addColumn(row -> Long.toString(row.hostCount()))
-                .setHeader("Hosts")
+        grid.addComponentColumn(row -> jobStateBadge(row.running()))
+                .setHeader("State")
                 .setAutoWidth(true)
                 .setSortable(false);
 
         grid.addColumn(row -> dateTimeFormatter.format(row.updatedAt()))
                 .setHeader("Updated at")
+                .setAutoWidth(true)
+                .setSortable(false);
+
+        grid.addColumn(row -> formatNextExecutionIn(safeNextExecution(row.id())))
+                .setHeader("Next execution in")
                 .setAutoWidth(true)
                 .setSortable(false);
 
@@ -155,12 +169,24 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
                 .setFlexGrow(0);
 
         grid.setDataProvider(DataProvider.fromCallbacks(
-                query -> jobDefinitionService.findAllListRows(PageRequest.of(
-                                query.getPage(),
-                                query.getPageSize(),
-                                Sort.by(Sort.Direction.DESC, "id")
-                        ))
-                        .stream(),
+                query -> {
+                    List<JobDefinitionListRow> baseRows = jobDefinitionService.findAllListRows(PageRequest.of(
+                            query.getPage(),
+                            query.getPageSize(),
+                            Sort.by(Sort.Direction.DESC, "id")
+                    )).getContent();
+                    List<Long> ids = baseRows.stream().map(JobDefinitionListRow::id).toList();
+                    var runningStates = jobQueryService.getRunningStates(ids);
+                    return baseRows.stream().map(r -> new JobTableRow(
+                            r.id(),
+                            r.name(),
+                            r.shell(),
+                            r.useSudo(),
+                            r.updatedAt(),
+                            r.hostCount(),
+                            Boolean.TRUE.equals(runningStates.get(r.id()))
+                    ));
+                },
                 query -> Math.toIntExact(jobDefinitionService.count())
         ));
 
@@ -307,7 +333,7 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
         dialog.open();
     }
 
-    private void runJob(JobDefinitionListRow row) {
+    private void runJob(JobTableRow row) {
         try {
             Long runId = jobRunnerService.startRun(row.id());
             showSuccess("Run started (id: " + runId + ")");
@@ -331,7 +357,7 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
 
         Grid<JobRun> runs = new Grid<>(JobRun.class, false);
         runs.addColumn(JobRun::getId).setHeader("Run ID").setAutoWidth(true).setSortable(false);
-        runs.addColumn(run -> run.getStatus().name()).setHeader("Status").setAutoWidth(true).setSortable(false);
+        runs.addComponentColumn(run -> StatusBadge.forJobRunStatus(run.getStatus())).setHeader("Status").setAutoWidth(true).setSortable(false);
         runs.addColumn(run -> dateTimeFormatter.format(run.getStartedAt())).setHeader("Started at").setAutoWidth(true).setSortable(false);
         runs.addColumn(run -> run.getFinishedAt() == null ? "-" : dateTimeFormatter.format(run.getFinishedAt()))
                 .setHeader("Finished at").setAutoWidth(true).setSortable(false);
@@ -344,7 +370,7 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
 
         Grid<JobExecution> execs = new Grid<>(JobExecution.class, false);
         execs.addColumn(exec -> exec.getHost().getName()).setHeader("Host").setAutoWidth(true).setSortable(false);
-        execs.addColumn(exec -> exec.getStatus().name()).setHeader("Status").setAutoWidth(true).setSortable(false);
+        execs.addComponentColumn(exec -> StatusBadge.forJobExecutionStatus(exec.getStatus())).setHeader("Status").setAutoWidth(true).setSortable(false);
         execs.addColumn(exec -> exec.getExitCode() == null ? "-" : exec.getExitCode().toString())
                 .setHeader("Exit").setAutoWidth(true).setSortable(false);
         execs.addColumn(exec -> exec.getStartedAt() == null ? "-" : dateTimeFormatter.format(exec.getStartedAt()))
@@ -422,7 +448,19 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
         });
         abortSelectedRun.addThemeVariants(ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_TERTIARY);
 
-        VerticalLayout layout = new VerticalLayout(new HorizontalLayout(run, abortSelectedRun, refresh), runs, execs);
+        LiveIndicator liveIndicator = new LiveIndicator();
+        UI ui = UI.getCurrent();
+        int previousPoll = ui.getPollInterval();
+        ui.setPollInterval(1500);
+        Registration pollReg = ui.addPollListener(event -> {
+            runs.getDataProvider().refreshAll();
+            if (selectedRunId[0] != null) {
+                execs.getDataProvider().refreshAll();
+            }
+            liveIndicator.markUpdatedNow();
+        });
+
+        VerticalLayout layout = new VerticalLayout(new HorizontalLayout(run, abortSelectedRun, refresh, liveIndicator), runs, execs);
         layout.setSizeFull();
         layout.expand(runs, execs);
 
@@ -432,6 +470,8 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
         dialog.getFooter().add(close);
 
         dialog.addDetachListener(event -> {
+            pollReg.remove();
+            ui.setPollInterval(previousPoll);
             if (clearRouteOnClose) {
                 UI.getCurrent().navigate("jobs");
             }
@@ -450,7 +490,7 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
 
         Grid<JobExecution> execs = new Grid<>(JobExecution.class, false);
         execs.addColumn(exec -> exec.getHost().getName()).setHeader("Host").setAutoWidth(true).setSortable(false);
-        execs.addColumn(exec -> exec.getStatus().name()).setHeader("Status").setAutoWidth(true).setSortable(false);
+        execs.addComponentColumn(exec -> StatusBadge.forJobExecutionStatus(exec.getStatus())).setHeader("Status").setAutoWidth(true).setSortable(false);
         execs.addColumn(exec -> exec.getExitCode() == null ? "-" : exec.getExitCode().toString()).setHeader("Exit").setAutoWidth(true);
         execs.addColumn(exec -> exec.getStartedAt() == null ? "-" : dateTimeFormatter.format(exec.getStartedAt()))
                 .setHeader("Started at").setAutoWidth(true);
@@ -486,14 +526,22 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
             }
         });
         abortRun.addThemeVariants(ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_TERTIARY);
+        LiveIndicator liveIndicator = new LiveIndicator();
 
         UI ui = UI.getCurrent();
+        int previousPoll = ui.getPollInterval();
         ui.setPollInterval(1500);
-        ui.addPollListener(event -> execs.getDataProvider().refreshAll());
+        Registration pollReg = ui.addPollListener(event -> {
+            execs.getDataProvider().refreshAll();
+            liveIndicator.markUpdatedNow();
+        });
 
-        dialog.addDetachListener(event -> ui.setPollInterval(-1));
+        dialog.addDetachListener(event -> {
+            pollReg.remove();
+            ui.setPollInterval(previousPoll);
+        });
 
-        VerticalLayout layout = new VerticalLayout(new HorizontalLayout(abortRun, refresh), execs);
+        VerticalLayout layout = new VerticalLayout(new HorizontalLayout(abortRun, refresh, liveIndicator), execs);
         layout.setSizeFull();
         layout.expand(execs);
         dialog.add(layout);
@@ -578,5 +626,40 @@ public class JobsView extends VerticalLayout implements BeforeEnterObserver {
 
     private String valueOrEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private Instant safeNextExecution(Long jobId) {
+        try {
+            return jobScheduleService.getNextFireTime(jobId);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private String formatNextExecutionIn(Instant nextExecution) {
+        if (nextExecution == null) {
+            return "-";
+        }
+        long seconds = Duration.between(Instant.now(), nextExecution).getSeconds();
+        if (seconds <= 0) {
+            return "due now";
+        }
+        if (seconds < 60) {
+            return "<1 min";
+        }
+        return (seconds / 60) + " min";
+    }
+
+    private Span jobStateBadge(boolean running) {
+        return StatusBadge.runningOrDash(running);
+    }
+
+    private record JobTableRow(Long id,
+                               String name,
+                               JobShell shell,
+                               boolean useSudo,
+                               Instant updatedAt,
+                               long hostCount,
+                               boolean running) {
     }
 }

@@ -6,6 +6,7 @@ import com.allanvital.maestrao.model.LogSourceStatus;
 import com.allanvital.maestrao.service.HostService;
 import com.allanvital.maestrao.service.log.LogLineQueryService;
 import com.allanvital.maestrao.service.log.LogSourceService;
+import com.allanvital.maestrao.view.component.StatusBadge;
 import com.allanvital.maestrao.view.MainLayout;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
@@ -113,7 +114,7 @@ public class LogsView extends VerticalLayout implements BeforeEnterObserver {
                 .setFlexGrow(1)
                 .setSortable(false);
 
-        grid.addColumn(this::stateText)
+        grid.addComponentColumn(log -> StatusBadge.forLogStatus(log.getStatus(), stateText(log)))
                 .setHeader("State")
                 .setAutoWidth(true)
                 .setSortable(false);

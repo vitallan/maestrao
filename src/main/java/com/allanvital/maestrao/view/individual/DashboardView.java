@@ -7,6 +7,8 @@ import com.allanvital.maestrao.service.job.JobDefinitionService;
 import com.allanvital.maestrao.service.job.JobQueryService;
 import com.allanvital.maestrao.service.job.schedule.JobScheduleService;
 import com.allanvital.maestrao.service.log.LogSourceService;
+import com.allanvital.maestrao.view.component.LiveIndicator;
+import com.allanvital.maestrao.view.component.StatusBadge;
 import com.allanvital.maestrao.view.MainLayout;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
@@ -19,12 +21,14 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
+import com.vaadin.flow.shared.Registration;
 import jakarta.annotation.security.PermitAll;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 
 import java.time.Instant;
+import java.time.Duration;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -42,6 +46,7 @@ public class DashboardView extends VerticalLayout {
 
     private static final int LOGS_PAGE_SIZE = 20;
     private static final int JOBS_PAGE_SIZE = 20;
+    private static final int LIVE_POLL_MS = 15000;
 
     private final LogSourceService logSourceService;
     private final JobDefinitionService jobDefinitionService;
@@ -65,6 +70,7 @@ public class DashboardView extends VerticalLayout {
     private final DateTimeFormatter dateTimeFormatter = DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm:ss")
             .withZone(ZoneId.systemDefault());
+    private final LiveIndicator liveIndicator = new LiveIndicator();
 
     public DashboardView(LogSourceService logSourceService,
                          JobDefinitionService jobDefinitionService,
@@ -82,6 +88,11 @@ public class DashboardView extends VerticalLayout {
         H1 title = new H1("Dashboard");
         title.getStyle().set("margin", "0");
 
+        HorizontalLayout titleRow = new HorizontalLayout(title, liveIndicator);
+        titleRow.setWidthFull();
+        titleRow.setAlignItems(FlexComponent.Alignment.CENTER);
+        titleRow.expand(title);
+
         VerticalLayout logsPanel = buildLogsPanel();
         VerticalLayout jobsPanel = buildJobsPanel();
 
@@ -93,11 +104,24 @@ public class DashboardView extends VerticalLayout {
         panels.getStyle().set("flex-wrap", "wrap");
         panels.setFlexGrow(1, logsPanel, jobsPanel);
 
-        add(title, panels);
+        add(titleRow, panels);
         setFlexGrow(1, panels);
 
         loadLogsPage(0);
         loadJobsPage(0);
+
+        UI ui = UI.getCurrent();
+        int previousPoll = ui.getPollInterval();
+        ui.setPollInterval(LIVE_POLL_MS);
+        Registration pollReg = ui.addPollListener(event -> {
+            loadLogsPage(logsPage);
+            loadJobsPage(jobsPage);
+            liveIndicator.markUpdatedNow();
+        });
+        addDetachListener(event -> {
+            pollReg.remove();
+            ui.setPollInterval(previousPoll);
+        });
     }
 
     private VerticalLayout buildLogsPanel() {
@@ -155,26 +179,10 @@ public class DashboardView extends VerticalLayout {
     }
 
     private Span logStateBadge(LogSource log) {
-        String text = stateText(log);
-        Span badge = new Span(text);
-        badge.getStyle()
-                .set("font-weight", "600")
-                .set("padding", "2px 8px")
-                .set("border-radius", "999px")
-                .set("border", "1px solid var(--lumo-contrast-10pct)");
-
-        LogSourceStatus status = log == null ? null : log.getStatus();
-        if (status == LogSourceStatus.RUNNING) {
-            badge.getStyle().set("background", "var(--lumo-success-color-10pct)").set("color", "var(--lumo-success-text-color)");
-        } else if (status == LogSourceStatus.ERROR) {
-            badge.getStyle().set("background", "var(--lumo-error-color-10pct)").set("color", "var(--lumo-error-text-color)");
-            String lastError = log == null ? null : log.getLastError();
-            if (lastError != null && !lastError.isBlank()) {
-                badge.getElement().setProperty("title", lastError);
-            }
-        } else {
-            // STOPPED (and anything else) => yellow
-            badge.getStyle().set("background", "var(--lumo-warning-color-10pct)").set("color", "var(--lumo-warning-text-color)");
+        Span badge = StatusBadge.forLogStatus(log == null ? null : log.getStatus(), stateText(log));
+        String lastError = log == null ? null : log.getLastError();
+        if (log != null && log.getStatus() == LogSourceStatus.ERROR && lastError != null && !lastError.isBlank()) {
+            badge.getElement().setProperty("title", lastError);
         }
         return badge;
     }
@@ -276,8 +284,8 @@ public class DashboardView extends VerticalLayout {
                 .setAutoWidth(true)
                 .setSortable(false);
 
-        jobsGrid.addColumn(row -> Long.toString(row.hostCount))
-                .setHeader("Hosts")
+        jobsGrid.addComponentColumn(row -> StatusBadge.runningOrDash(row.running))
+                .setHeader("State")
                 .setAutoWidth(true)
                 .setSortable(false);
 
@@ -294,6 +302,11 @@ public class DashboardView extends VerticalLayout {
 
         jobsGrid.addColumn(row -> row.nextExecution == null ? "-" : dateTimeFormatter.format(row.nextExecution))
                 .setHeader("Next execution")
+                .setAutoWidth(true)
+                .setSortable(false);
+
+        jobsGrid.addColumn(row -> formatNextExecutionIn(row.nextExecution))
+                .setHeader("Next execution in")
                 .setAutoWidth(true)
                 .setSortable(false);
     }
@@ -336,6 +349,7 @@ public class DashboardView extends VerticalLayout {
         List<JobDefinitionListRow> list = page.getContent();
         List<Long> ids = list.stream().map(JobDefinitionListRow::id).filter(Objects::nonNull).toList();
         Map<Long, JobQueryService.JobLastOutcome> outcomes = jobQueryService.getLastOutcomes(ids);
+        Map<Long, Boolean> runningStates = jobQueryService.getRunningStates(ids);
 
         List<JobRow> rows = list.stream().map(r -> {
             JobQueryService.JobLastOutcome outcome = outcomes.get(r.id());
@@ -346,7 +360,8 @@ public class DashboardView extends VerticalLayout {
                 next = jobScheduleService.getNextFireTime(r.id());
             } catch (RuntimeException ignored) {
             }
-            return new JobRow(r.id(), r.name(), r.hostCount(), lastResult, failed, next);
+            boolean running = Boolean.TRUE.equals(runningStates.get(r.id()));
+            return new JobRow(r.id(), r.name(), lastResult, failed, next, running);
         }).collect(Collectors.toList());
 
         jobsGrid.setItems(rows);
@@ -382,12 +397,26 @@ public class DashboardView extends VerticalLayout {
         return "STOPPED";
     }
 
+    private String formatNextExecutionIn(Instant nextExecution) {
+        if (nextExecution == null) {
+            return "-";
+        }
+        long seconds = Duration.between(Instant.now(), nextExecution).getSeconds();
+        if (seconds <= 0) {
+            return "due now";
+        }
+        if (seconds < 60) {
+            return "<1 min";
+        }
+        return (seconds / 60) + " min";
+    }
+
     private record JobRow(Long id,
                           String name,
-                          long hostCount,
                           String lastResult,
                           boolean lastFailed,
-                          Instant nextExecution) {
+                          Instant nextExecution,
+                          boolean running) {
     }
 
 }

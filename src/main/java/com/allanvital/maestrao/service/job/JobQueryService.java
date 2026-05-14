@@ -3,6 +3,7 @@ package com.allanvital.maestrao.service.job;
 import com.allanvital.maestrao.model.JobExecution;
 import com.allanvital.maestrao.model.JobExecutionStatus;
 import com.allanvital.maestrao.model.JobRun;
+import com.allanvital.maestrao.model.JobRunStatus;
 import com.allanvital.maestrao.repository.JobFailedExecutionRow;
 import com.allanvital.maestrao.repository.JobExecutionRepository;
 import com.allanvital.maestrao.repository.JobRunExecutionCountRow;
@@ -117,6 +118,28 @@ public class JobQueryService {
         }
 
         return outcomes;
+    }
+
+    @Transactional(readOnly = true)
+    public Map<Long, Boolean> getRunningStates(List<Long> jobDefinitionIds) {
+        if (jobDefinitionIds == null || jobDefinitionIds.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> ids = jobDefinitionIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Boolean> states = new HashMap<>();
+        for (Long id : ids) {
+            states.put(id, false);
+        }
+        jobRunRepository.findRunningJobDefinitionIds(ids, JobRunStatus.RUNNING)
+                .forEach(row -> {
+                    if (row != null && row.jobDefinitionId() != null) {
+                        states.put(row.jobDefinitionId(), true);
+                    }
+                });
+        return states;
     }
 
     @Transactional(readOnly = true)
