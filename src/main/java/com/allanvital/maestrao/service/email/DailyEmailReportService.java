@@ -147,7 +147,7 @@ public class DailyEmailReportService {
         if (!runIds.isEmpty()) {
             List<JobFailedExecutionRow> failed = jobExecutionRepository.findFailedExecutionsByRunIds(
                     runIds,
-                    List.of(JobExecutionStatus.FAILED, JobExecutionStatus.TIMEOUT)
+                    List.of(JobExecutionStatus.FAILED, JobExecutionStatus.TIMEOUT, JobExecutionStatus.ABORTED)
             );
             if (failed != null) {
                 for (JobFailedExecutionRow row : failed) {

@@ -23,6 +23,9 @@ public class JobRun {
     @Column(nullable = false, length = 20)
     private JobRunStatus status;
 
+    @Column(nullable = false)
+    private boolean abortRequested;
+
     @Column(nullable = false, updatable = false)
     private Instant startedAt;
 
@@ -73,5 +76,13 @@ public class JobRun {
 
     public void setFinishedAt(Instant finishedAt) {
         this.finishedAt = finishedAt;
+    }
+
+    public boolean isAbortRequested() {
+        return abortRequested;
+    }
+
+    public void setAbortRequested(boolean abortRequested) {
+        this.abortRequested = abortRequested;
     }
 }

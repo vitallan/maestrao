@@ -1,5 +1,7 @@
 package com.allanvital.maestrao.view;
 
+import com.allanvital.maestrao.artifactproxy.view.ArtifactProxyView;
+import com.allanvital.maestrao.artifactproxy.config.ArtifactProxyProperties;
 import com.allanvital.maestrao.service.AppVersionService;
 import com.allanvital.maestrao.view.individual.*;
 import com.vaadin.flow.component.applayout.AppLayout;
@@ -20,7 +22,12 @@ import jakarta.annotation.security.PermitAll;
 @PermitAll
 public class MainLayout extends AppLayout {
 
-    public MainLayout(AuthenticationContext authenticationContext, AppVersionService appVersionService) {
+    private final ArtifactProxyProperties artifactProxyProperties;
+
+    public MainLayout(AuthenticationContext authenticationContext,
+                      AppVersionService appVersionService,
+                      ArtifactProxyProperties artifactProxyProperties) {
+        this.artifactProxyProperties = artifactProxyProperties;
         createHeader(authenticationContext, appVersionService);
         createDrawer();
     }
@@ -76,6 +83,10 @@ public class MainLayout extends AppLayout {
                 new SideNavItem("Email", EmailView.class, VaadinIcon.ENVELOPE.create())
                 //new SideNavItem("Configuration", ConfigurationView.class, VaadinIcon.COG.create())
         );
+
+        if (artifactProxyProperties.isEnabled()) {
+            nav.addItem(new SideNavItem("Artifact Proxy", ArtifactProxyView.class, VaadinIcon.DOWNLOAD_ALT.create()));
+        }
 
         addToDrawer(appName, nav);
     }

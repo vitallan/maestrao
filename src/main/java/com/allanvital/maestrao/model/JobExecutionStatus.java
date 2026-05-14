@@ -8,5 +8,6 @@ public enum JobExecutionStatus {
     RUNNING,
     SUCCESS,
     FAILED,
-    TIMEOUT
+    TIMEOUT,
+    ABORTED
 }

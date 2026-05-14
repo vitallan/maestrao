@@ -47,7 +47,7 @@ public class LogFileCollector implements LogCollectorRunnerFactory {
 
         String command = "tail -n 0 -F -- '" + escapeSingleQuotes(filePath) + "'";
 
-        try (SshClient.SshExecHandle handle = sshClient.exec(host.getIp(), host.getSshPort(), decryptedCredential, command)) {
+        try (SshClient.SshExecHandle handle = sshClient.exec(host.getIp(), host.getSshPort(), decryptedCredential, command, null)) {
             control.setResource(handle);
 
             BufferedReader reader = new BufferedReader(new InputStreamReader(handle.stdout(), StandardCharsets.UTF_8));

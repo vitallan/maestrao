@@ -41,6 +41,11 @@ Default login (override via config if needed):
 - Username: `admin`
 - Password: `admin`
 
+To override these configs through variables use:
+
+- `MAESTRAO_SECURITY_ADMIN_USERNAME`
+- `MAESTRAO_SECURITY_ADMIN_PASSWORD`
+
 ### Optional: MySQL via environment variables
 
 Set these when running the container:
@@ -65,3 +70,19 @@ Database URL examples:
 
 - Data is stored in the configured database. With the default H2 in-memory setup, all data is lost when the app stops.
 - This project is intentionally small and pragmatic. It is not meant to compete with full observability stacks.
+
+## Maven Proxy Cache (optional)
+
+Maestrao can run a proxy-only Maven cache endpoint at `/maven/*`.
+
+- Enable with: `MAESTRAO_ARTIFACT_PROXY_ENABLED=true`
+- Cache root (filesystem): `MAESTRAO_ARTIFACT_PROXY_CACHE_ROOT=/data/artifact-cache`
+- Endpoint is intentionally open for LAN usage (no per-client auth in current scope).
+
+### Docker persistence for cached artifacts
+
+The image declares `/data/artifact-cache` as a volume. Persist it with a bind/volume mount:
+
+`docker run --rm -p 8080:8080 -e MAESTRAO_CREDENTIALS_ENCRYPTION_KEY='CHANGE_ME' -e MAESTRAO_ARTIFACT_PROXY_ENABLED=true -v maestrao-artifacts:/data/artifact-cache maestrao:local`
+
+This keeps downloaded Maven artifacts across container restarts.

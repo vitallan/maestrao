@@ -13,7 +13,7 @@ public interface SshClient {
 
     HostConnectionTestResult test(String ip, Integer sshPort, DecryptedCredential credential);
 
-    SshExecHandle exec(String ip, Integer sshPort, DecryptedCredential credential, String command);
+    SshExecHandle exec(String ip, Integer sshPort, DecryptedCredential credential, String command, byte[] stdin);
 
     SshExecResult execBlocking(String ip,
                               Integer sshPort,
@@ -36,6 +36,10 @@ public interface SshClient {
         java.io.InputStream stdout();
 
         java.io.InputStream stderr();
+
+        boolean isClosed();
+
+        Integer exitStatus();
 
         @Override
         void close();

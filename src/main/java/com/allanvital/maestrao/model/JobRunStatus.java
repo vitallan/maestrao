@@ -5,5 +5,6 @@ package com.allanvital.maestrao.model;
  */
 public enum JobRunStatus {
     RUNNING,
-    COMPLETED
+    COMPLETED,
+    ABORTED
 }

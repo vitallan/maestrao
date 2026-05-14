@@ -70,7 +70,7 @@ public class JschSshClient implements SshClient {
     }
 
     @Override
-    public SshExecHandle exec(String ip, Integer sshPort, DecryptedCredential credential, String command) {
+    public SshExecHandle exec(String ip, Integer sshPort, DecryptedCredential credential, String command, byte[] stdin) {
         if (credential == null) {
             throw new IllegalArgumentException("Credential is required");
         }
@@ -111,7 +111,7 @@ public class JschSshClient implements SshClient {
 
             channel = (ChannelExec) session.openChannel("exec");
             channel.setCommand(command);
-            channel.setInputStream(null);
+            channel.setInputStream(stdin == null ? null : new ByteArrayInputStream(stdin));
             channel.connect(CONNECT_TIMEOUT_MILLIS);
 
             final InputStream stdout = channel.getInputStream();
@@ -135,6 +135,17 @@ public class JschSshClient implements SshClient {
                 @Override
                 public InputStream stderr() {
                     return stderr;
+                }
+
+                @Override
+                public boolean isClosed() {
+                    return finalChannel.isClosed();
+                }
+
+                @Override
+                public Integer exitStatus() {
+                    int status = finalChannel.getExitStatus();
+                    return status < 0 ? null : status;
                 }
 
                 @Override

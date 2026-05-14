@@ -41,7 +41,8 @@ public class VaadinSecurityConfig {
                         "/site.webmanifest",
                         "/web-app-manifest-*.png",
                         "/maestrao*.png",
-                        "/maestrao.svg"
+                        "/maestrao.svg",
+                        "/maven/**"
                 ).permitAll()
         );
 

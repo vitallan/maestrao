@@ -35,16 +35,28 @@ public class FakeSshClient implements SshClient {
     }
 
     @Override
-    public SshExecHandle exec(String ip, Integer sshPort, DecryptedCredential credential, String command) {
+    public SshExecHandle exec(String ip, Integer sshPort, DecryptedCredential credential, String command, byte[] stdin) {
         this.lastIp = ip;
         this.lastSshPort = sshPort;
         this.lastCredential = credential;
         this.lastCommand = command;
-        this.lastStdin = null;
+        this.lastStdin = stdin;
 
         FakeExecHandle handle = nextExecHandles.poll();
         if (handle == null) {
-            throw new IllegalStateException("No FakeExecHandle enqueued");
+            FakeExecResult result = nextExecResults.poll();
+            if (result == null) {
+                throw new IllegalStateException("No FakeExecHandle/FakeExecResult enqueued");
+            }
+            handle = new FakeExecHandle();
+            if (result.stdout != null && !result.stdout.isEmpty()) {
+                handle.emitRawStdout(result.stdout);
+            }
+            if (result.stderr != null && !result.stderr.isEmpty()) {
+                handle.emitRawStderr(result.stderr);
+            }
+            handle.setExitStatus(result.exitCode);
+            handle.close();
         }
         return handle;
     }
@@ -137,12 +149,17 @@ public class FakeSshClient implements SshClient {
     public static class FakeExecHandle implements SshExecHandle {
         private final PipedInputStream stdoutIn;
         private final PipedOutputStream stdoutOut;
+        private final PipedInputStream stderrIn;
+        private final PipedOutputStream stderrOut;
         private volatile boolean closed;
+        private volatile Integer exitStatus;
 
         public FakeExecHandle() {
             try {
                 this.stdoutIn = new PipedInputStream();
                 this.stdoutOut = new PipedOutputStream(stdoutIn);
+                this.stderrIn = new PipedInputStream();
+                this.stderrOut = new PipedOutputStream(stderrIn);
             } catch (Exception e) {
                 throw new IllegalStateException(e);
             }
@@ -155,7 +172,17 @@ public class FakeSshClient implements SshClient {
 
         @Override
         public InputStream stderr() {
-            return InputStream.nullInputStream();
+            return stderrIn;
+        }
+
+        @Override
+        public boolean isClosed() {
+            return closed;
+        }
+
+        @Override
+        public Integer exitStatus() {
+            return closed ? (exitStatus == null ? 0 : exitStatus) : null;
         }
 
         public void emitLine(String line) {
@@ -170,6 +197,34 @@ public class FakeSshClient implements SshClient {
             }
         }
 
+        public void emitRawStdout(String chunk) {
+            if (closed) {
+                throw new IllegalStateException("Handle is closed");
+            }
+            try {
+                stdoutOut.write(chunk.getBytes(StandardCharsets.UTF_8));
+                stdoutOut.flush();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        public void emitRawStderr(String chunk) {
+            if (closed) {
+                throw new IllegalStateException("Handle is closed");
+            }
+            try {
+                stderrOut.write(chunk.getBytes(StandardCharsets.UTF_8));
+                stderrOut.flush();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        public void setExitStatus(Integer exitStatus) {
+            this.exitStatus = exitStatus;
+        }
+
         @Override
         public void close() {
             closed = true;
@@ -178,7 +233,7 @@ public class FakeSshClient implements SshClient {
             } catch (Exception ignored) {
             }
             try {
-                stdoutIn.close();
+                stderrOut.close();
             } catch (Exception ignored) {
             }
         }

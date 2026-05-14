@@ -17,8 +17,13 @@ WORKDIR /app
 
 ARG APP_VERSION
 ENV MAESTRAO_APP_VERSION=$APP_VERSION
+ENV MAESTRAO_ARTIFACT_PROXY_CACHE_ROOT=/data/artifact-cache
 
 COPY --from=build /workspace/target/*.jar /app/app.jar
+
+RUN mkdir -p /data/artifact-cache
+
+VOLUME ["/data/artifact-cache"]
 
 EXPOSE 8080
 

@@ -69,7 +69,7 @@ public class JobQueryService {
             }
         }
 
-        List<JobExecutionStatus> failedStatuses = List.of(JobExecutionStatus.FAILED, JobExecutionStatus.TIMEOUT);
+        List<JobExecutionStatus> failedStatuses = List.of(JobExecutionStatus.FAILED, JobExecutionStatus.TIMEOUT, JobExecutionStatus.ABORTED);
         List<JobFailedExecutionRow> failed = jobExecutionRepository.findFailedExecutionsByRunIds(runIds, failedStatuses);
 
         Map<Long, List<JobFailedExecutionRow>> failedByRun = new HashMap<>();

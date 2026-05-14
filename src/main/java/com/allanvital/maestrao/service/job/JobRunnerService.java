@@ -16,11 +16,14 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Instant;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * @author Allan Vital (https://allanvital.com)
@@ -40,6 +43,7 @@ public class JobRunnerService {
 
     private final long timeoutMillis;
     private final int maxOutputBytes;
+    private final ConcurrentHashMap<Long, SshClient.SshExecHandle> activeRunHandles = new ConcurrentHashMap<>();
 
     public JobRunnerService(JobDefinitionRepository jobDefinitionRepository,
                             JobRunRepository jobRunRepository,
@@ -106,6 +110,26 @@ public class JobRunnerService {
         runSequential(runId);
     }
 
+    public void requestAbortRun(Long runId) {
+        if (runId == null) {
+            throw new IllegalArgumentException("run is required");
+        }
+        tx.execute(status -> {
+            JobRun run = jobRunRepository.findById(runId)
+                    .orElseThrow(() -> new IllegalArgumentException("Run not found: " + runId));
+            if (run.getStatus() == JobRunStatus.RUNNING) {
+                run.setAbortRequested(true);
+                jobRunRepository.save(run);
+            }
+            return null;
+        });
+        SshClient.SshExecHandle handle = activeRunHandles.get(runId);
+        if (handle != null) {
+            handle.close();
+        }
+        log.info("jobRun.abortRequested runId={}", runId);
+    }
+
     private Long createRun(Long jobDefinitionId) {
         Long runId = tx.execute(status -> {
             JobDefinition job = jobDefinitionRepository.findWithHostsById(jobDefinitionId)
@@ -122,6 +146,7 @@ public class JobRunnerService {
             JobRun run = new JobRun();
             run.setJobDefinition(job);
             run.setStatus(JobRunStatus.RUNNING);
+            run.setAbortRequested(false);
             run.setStartedAt(Instant.now());
             run = jobRunRepository.save(run);
 
@@ -163,8 +188,12 @@ public class JobRunnerService {
         final long[] failed = {0};
         final long[] timeout = {0};
 
-        for (Long executionId : executionIds) {
-            try {
+        try {
+            for (Long executionId : executionIds) {
+                if (isAbortRequested(runId)) {
+                    markExecutionAbortedIfActive(executionId, "run abort requested");
+                    continue;
+                }
                 tx.execute(status -> {
                     JobExecution exec = jobExecutionRepository.findById(executionId)
                             .orElseThrow(() -> new IllegalArgumentException("Execution not found: " + executionId));
@@ -209,85 +238,250 @@ public class JobRunnerService {
                     }
                     return null;
                 });
-            } catch (RuntimeException e) {
-                tx.execute(status -> {
-                    JobExecution exec = jobExecutionRepository.findById(executionId).orElse(null);
-                    if (exec != null) {
-                        exec.setStatus(JobExecutionStatus.FAILED);
-                        exec.setFinishedAt(Instant.now());
-                        exec.setErrorMessage(safeMessage(e));
-                        jobExecutionRepository.save(exec);
-
-                        Host h = exec.getHost();
-                        failed[0]++;
-                        log.warn("jobExec.failed execId={} host={} exitCode={} error={}",
-                                exec.getId(), h == null ? null : h.getName(), exec.getExitCode(), safeMessage(e));
-                        log.debug("jobExec.failedStack execId={}", exec.getId(), e);
-                    }
-                    return null;
-                });
             }
+        } catch (RuntimeException e) {
+            tx.execute(status -> {
+                JobExecution exec = jobExecutionRepository.findAllByJobRunIdOrderByIdAsc(runId)
+                        .stream()
+                        .filter(x -> x.getStatus() == JobExecutionStatus.RUNNING)
+                        .findFirst()
+                        .orElse(null);
+                if (exec != null) {
+                    exec.setStatus(JobExecutionStatus.FAILED);
+                    exec.setFinishedAt(Instant.now());
+                    exec.setErrorMessage(safeMessage(e));
+                    jobExecutionRepository.save(exec);
+                }
+                return null;
+            });
+            failed[0]++;
+            log.warn("jobRun.failed runId={} error={}", runId, safeMessage(e));
+            log.debug("jobRun.failedStack runId={}", runId, e);
+        } finally {
+            finalizeRun(runId);
         }
-
-        tx.execute(status -> {
-            JobRun run = jobRunRepository.findById(runId).orElse(null);
-            if (run != null) {
-                run.setStatus(JobRunStatus.COMPLETED);
-                run.setFinishedAt(Instant.now());
-                jobRunRepository.save(run);
-            }
-            return null;
-        });
 
         long durationMs = Duration.between(runStart, Instant.now()).toMillis();
         log.info("jobRun.finish runId={} durationMs={} success={} failed={} timeout={}",
                 runId, durationMs, success[0], failed[0], timeout[0]);
     }
 
-    private void runSingleExecution(Long executionId) {
+    private void finalizeRun(Long runId) {
         tx.execute(status -> {
+            JobRun run = jobRunRepository.findById(runId).orElse(null);
+            if (run == null) {
+                return null;
+            }
+            if (run.getFinishedAt() == null) {
+                run.setFinishedAt(Instant.now());
+            }
+            run.setStatus(run.isAbortRequested() ? JobRunStatus.ABORTED : JobRunStatus.COMPLETED);
+            jobRunRepository.save(run);
+            return null;
+        });
+    }
+
+    private boolean isAbortRequested(Long runId) {
+        return tx.execute(status -> jobRunRepository.findById(runId).map(JobRun::isAbortRequested).orElse(false));
+    }
+
+    private void markExecutionAbortedIfActive(Long executionId, String reason) {
+        tx.execute(status -> {
+            JobExecution exec = jobExecutionRepository.findById(executionId).orElse(null);
+            if (exec == null) {
+                return null;
+            }
+            if (exec.getStatus() == JobExecutionStatus.SUCCESS
+                    || exec.getStatus() == JobExecutionStatus.FAILED
+                    || exec.getStatus() == JobExecutionStatus.TIMEOUT
+                    || exec.getStatus() == JobExecutionStatus.ABORTED) {
+                return null;
+            }
+            exec.setStatus(JobExecutionStatus.ABORTED);
+            exec.setFinishedAt(Instant.now());
+            exec.setErrorMessage(reason);
+            jobExecutionRepository.save(exec);
+            return null;
+        });
+    }
+
+    private void runSingleExecution(Long executionId) {
+        ExecutionContext ctx = tx.execute(status -> {
             JobExecution exec = jobExecutionRepository.findById(executionId)
                     .orElseThrow(() -> new IllegalArgumentException("Execution not found: " + executionId));
-
             JobRun run = exec.getJobRun();
             JobDefinition job = run.getJobDefinition();
             Host host = exec.getHost();
             Credential credential = host.getCredential();
-
             String secret = credentialCryptoService.decrypt(credential.getEncryptedSecret());
             DecryptedCredential decryptedCredential = new DecryptedCredential(credential, secret);
-
             ExecSpec spec = buildExecSpec(job);
-            Instant execStart = Instant.now();
-            SshClient.SshExecResult result = sshClient.execBlocking(
-                    host.getIp(),
-                    host.getSshPort(),
-                    decryptedCredential,
-                    spec.command,
-                    spec.stdin,
-                    timeoutMillis,
-                    maxOutputBytes,
-                    maxOutputBytes
-            );
+            return new ExecutionContext(exec.getId(), run.getId(), host, decryptedCredential, spec);
+        });
+        if (ctx == null) {
+            throw new IllegalStateException("execution context missing: " + executionId);
+        }
+        runStreamingExecution(ctx.executionId(), ctx.runId(), ctx.host(), ctx.decryptedCredential(), ctx.spec());
+    }
 
-            exec.setStdout(result.stdout());
-            exec.setStderr(result.stderr());
-            exec.setTruncatedStdout(result.truncatedStdout());
-            exec.setTruncatedStderr(result.truncatedStderr());
-            exec.setExitCode(result.exitCode());
-            exec.setFinishedAt(Instant.now());
+    private void runStreamingExecution(Long executionId,
+                                       Long runId,
+                                       Host host,
+                                       DecryptedCredential decryptedCredential,
+                                       ExecSpec spec) {
+        StringBuilder stdout = new StringBuilder();
+        StringBuilder stderr = new StringBuilder();
+        CaptureState outState = new CaptureState(maxOutputBytes);
+        CaptureState errState = new CaptureState(maxOutputBytes);
 
-            if (result.timedOut()) {
-                exec.setStatus(JobExecutionStatus.TIMEOUT);
-            } else if (result.exitCode() != null && result.exitCode() == 0) {
-                exec.setStatus(JobExecutionStatus.SUCCESS);
-            } else {
-                exec.setStatus(JobExecutionStatus.FAILED);
+        long deadline = System.currentTimeMillis() + Math.max(1_000, timeoutMillis);
+        long nextFlushAt = System.currentTimeMillis() + 800;
+
+        SshClient.SshExecHandle handle = sshClient.exec(host.getIp(), host.getSshPort(), decryptedCredential, spec.command, spec.stdin);
+        activeRunHandles.put(runId, handle);
+        try (handle) {
+            while (true) {
+                drain(handle.stdout(), stdout, outState);
+                drain(handle.stderr(), stderr, errState);
+
+                long now = System.currentTimeMillis();
+                if (now >= nextFlushAt) {
+                    flushPartial(executionId, stdout, stderr, outState, errState);
+                    nextFlushAt = now + 800;
+                }
+
+                boolean abort = isAbortRequested(runId);
+                if (abort) {
+                    handle.close();
+                    finalizeExecution(executionId, null, stdout, stderr, outState, errState, JobExecutionStatus.ABORTED, "run abort requested");
+                    return;
+                }
+
+                if (now > deadline) {
+                    handle.close();
+                    finalizeExecution(executionId, null, stdout, stderr, outState, errState, JobExecutionStatus.TIMEOUT, "execution timed out");
+                    return;
+                }
+
+                if (handle.isClosed()) {
+                    drainRemaining(handle.stdout(), stdout, outState);
+                    drainRemaining(handle.stderr(), stderr, errState);
+                    Integer exit = handle.exitStatus();
+                    JobExecutionStatus finalStatus = (exit != null && exit == 0) ? JobExecutionStatus.SUCCESS : JobExecutionStatus.FAILED;
+                    finalizeExecution(executionId, exit, stdout, stderr, outState, errState, finalStatus, null);
+                    return;
+                }
+
+                sleepShort();
             }
+        } finally {
+            activeRunHandles.remove(runId);
+        }
+    }
 
-            jobExecutionRepository.save(exec);
+    private void finalizeExecution(Long execId,
+                                   Integer exitCode,
+                                   StringBuilder stdout,
+                                   StringBuilder stderr,
+                                   CaptureState outState,
+                                   CaptureState errState,
+                                   JobExecutionStatus status,
+                                   String errorMessage) {
+        tx.execute(s -> {
+            JobExecution latest = jobExecutionRepository.findById(execId)
+                    .orElseThrow(() -> new IllegalArgumentException("Execution not found: " + execId));
+            latest.setStdout(stdout.toString());
+            latest.setStderr(stderr.toString());
+            latest.setTruncatedStdout(outState.truncated);
+            latest.setTruncatedStderr(errState.truncated);
+            latest.setExitCode(exitCode);
+            latest.setStatus(status);
+            latest.setErrorMessage(errorMessage);
+            latest.setFinishedAt(Instant.now());
+            jobExecutionRepository.save(latest);
             return null;
         });
+    }
+
+    private void flushPartial(Long execId,
+                              StringBuilder stdout,
+                              StringBuilder stderr,
+                              CaptureState outState,
+                              CaptureState errState) {
+        tx.execute(s -> {
+            JobExecution latest = jobExecutionRepository.findById(execId).orElse(null);
+            if (latest == null || latest.getStatus() != JobExecutionStatus.RUNNING) {
+                return null;
+            }
+            latest.setStdout(stdout.toString());
+            latest.setStderr(stderr.toString());
+            latest.setTruncatedStdout(outState.truncated);
+            latest.setTruncatedStderr(errState.truncated);
+            jobExecutionRepository.save(latest);
+            return null;
+        });
+    }
+
+    private void drain(InputStream input, StringBuilder target, CaptureState state) {
+        if (input == null) {
+            return;
+        }
+        try {
+            while (input.available() > 0) {
+                int maxRead = Math.min(4096, input.available());
+                byte[] buf = new byte[maxRead];
+                int read = input.read(buf);
+                if (read <= 0) {
+                    return;
+                }
+                if (state.bytes >= state.maxBytes) {
+                    state.truncated = true;
+                    continue;
+                }
+                int allowed = Math.min(read, state.maxBytes - state.bytes);
+                target.append(new String(buf, 0, allowed, StandardCharsets.UTF_8));
+                state.bytes += allowed;
+                if (allowed < read) {
+                    state.truncated = true;
+                }
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    private void sleepShort() {
+        try {
+            Thread.sleep(50);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted", e);
+        }
+    }
+
+    private void drainRemaining(InputStream input, StringBuilder target, CaptureState state) {
+        if (input == null) {
+            return;
+        }
+        try {
+            byte[] buf = new byte[4096];
+            while (true) {
+                int read = input.read(buf);
+                if (read <= 0) {
+                    return;
+                }
+                if (state.bytes >= state.maxBytes) {
+                    state.truncated = true;
+                    continue;
+                }
+                int allowed = Math.min(read, state.maxBytes - state.bytes);
+                target.append(new String(buf, 0, allowed, StandardCharsets.UTF_8));
+                state.bytes += allowed;
+                if (allowed < read) {
+                    state.truncated = true;
+                }
+            }
+        } catch (IOException ignored) {
+        }
     }
 
     private String summarize(String msg) {
@@ -331,5 +525,24 @@ public class JobRunnerService {
             this.command = command;
             this.stdin = stdin;
         }
+    }
+
+    private static class CaptureState {
+        private final int maxBytes;
+        private int bytes;
+        private boolean truncated;
+
+        private CaptureState(int maxBytes) {
+            this.maxBytes = Math.max(0, maxBytes);
+            this.bytes = 0;
+            this.truncated = false;
+        }
+    }
+
+    private record ExecutionContext(Long executionId,
+                                    Long runId,
+                                    Host host,
+                                    DecryptedCredential decryptedCredential,
+                                    ExecSpec spec) {
     }
 }

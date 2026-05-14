@@ -159,6 +159,65 @@ public class JobRunnerServiceTest {
         assertThrows(IllegalArgumentException.class, () -> jobRunnerService.startRun(job.getId()));
     }
 
+    @Test
+    void shouldStreamStdoutBeforeRunFinishes() {
+        Long hostId = createHost("Host A", "10.0.0.1");
+        JobDefinition job = jobDefinitionService.create(
+                "Stream",
+                JobShell.BASH,
+                false,
+                "echo first; sleep 1; echo second\n",
+                setOf(hostId),
+                false,
+                null
+        );
+
+        FakeSshClient.FakeExecHandle handle = fakeSshClient.enqueueExecHandle();
+        Long runId = jobRunnerService.startRun(job.getId());
+
+        Long execId = awaitAnyExecutionId(runId, 5000);
+        awaitExecutionStatus(execId, JobExecutionStatus.RUNNING, 5000);
+
+        handle.emitLine("first");
+        awaitStdoutContains(execId, "first", 5000);
+
+        handle.emitLine("second");
+        handle.close();
+
+        awaitRunCompleted(runId, 5000);
+        JobExecution execution = jobExecutionRepository.findById(execId).orElseThrow();
+        assertEquals(JobExecutionStatus.SUCCESS, execution.getStatus());
+        assertTrue(execution.getStdout().contains("first"));
+        assertTrue(execution.getStdout().contains("second"));
+    }
+
+    @Test
+    void shouldAbortEntireRun() {
+        Long hostA = createHost("Host A", "10.0.0.1");
+        Long hostB = createHost("Host B", "10.0.0.2");
+        JobDefinition job = jobDefinitionService.create(
+                "Abort",
+                JobShell.BASH,
+                false,
+                "sleep 30\n",
+                setOf(hostA, hostB),
+                false,
+                null
+        );
+
+        FakeSshClient.FakeExecHandle handle = fakeSshClient.enqueueExecHandle();
+        Long runId = jobRunnerService.startRun(job.getId());
+        Long execId = awaitAnyExecutionId(runId, 5000);
+        awaitExecutionStatus(execId, JobExecutionStatus.RUNNING, 5000);
+
+        jobRunnerService.requestAbortRun(runId);
+        awaitRunStatus(runId, JobRunStatus.ABORTED, 5000);
+
+        JobExecution first = jobExecutionRepository.findById(execId).orElseThrow();
+        assertEquals(JobExecutionStatus.ABORTED, first.getStatus());
+        assertTrue(handle.isClosed());
+    }
+
     private Long createHost(String name, String ip) {
         Credential credential = credentialService.create("cred", CredentialType.PASSWORD, "root", "pw", null);
         Host host = hostService.create(name, ip, 22, null, credential.getId(), false);
@@ -187,5 +246,74 @@ public class JobRunnerServiceTest {
             }
         }
         fail("Timed out waiting for run completion: " + runId);
+    }
+
+    private void awaitRunStatus(Long runId, JobRunStatus expected, long timeoutMillis) {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (System.currentTimeMillis() < deadline) {
+            JobRun run = jobRunRepository.findById(runId).orElse(null);
+            if (run != null && run.getStatus() == expected) {
+                return;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("Interrupted");
+            }
+        }
+        fail("Timed out waiting for run status " + expected + ": " + runId);
+    }
+
+    private Long awaitAnyExecutionId(Long runId, long timeoutMillis) {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (System.currentTimeMillis() < deadline) {
+            List<JobExecution> executions = jobExecutionRepository.findAllByJobRunIdOrderByIdAsc(runId);
+            if (!executions.isEmpty()) {
+                return executions.get(0).getId();
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("Interrupted");
+            }
+        }
+        fail("Timed out waiting for execution");
+        return null;
+    }
+
+    private void awaitExecutionStatus(Long execId, JobExecutionStatus expected, long timeoutMillis) {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (System.currentTimeMillis() < deadline) {
+            JobExecution execution = jobExecutionRepository.findById(execId).orElse(null);
+            if (execution != null && execution.getStatus() == expected) {
+                return;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("Interrupted");
+            }
+        }
+        fail("Timed out waiting for execution status " + expected);
+    }
+
+    private void awaitStdoutContains(Long execId, String expected, long timeoutMillis) {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (System.currentTimeMillis() < deadline) {
+            JobExecution execution = jobExecutionRepository.findById(execId).orElse(null);
+            if (execution != null && execution.getStdout() != null && execution.getStdout().contains(expected)) {
+                return;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("Interrupted");
+            }
+        }
+        fail("Timed out waiting for stdout to contain: " + expected);
     }
 }
